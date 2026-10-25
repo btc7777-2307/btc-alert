@@ -14,7 +14,7 @@
   --fg: #e4e9f0; --muted: #8d99ab; --accent: #79a8f2;
   --long: #3fbf9b; --short: #ef6d60; --wait: #d6a446;
   --long-bg: rgba(63,191,155,.12); --short-bg: rgba(239,109,96,.12); --wait-bg: rgba(214,164,70,.10);
-  --ema20: #d6a446; --ema50: #79a8f2; --bb: #a48be8; --draw: #e8c25a; --fib: #6fc3d6;
+  --ema20: #d6a446; --ema50: #79a8f2; --ema200: #e8c25a; --dc: #6fc3d6; --bb: #a48be8; --draw: #e8c25a; --fib: #6fc3d6;
   --long-dim: rgba(63,191,155,.45); --short-dim: rgba(239,109,96,.45);
   --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
   --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -26,7 +26,7 @@
     --fg: #182230; --muted: #5f6b7c; --accent: #2f66c4;
     --long: #13896b; --short: #cf4436; --wait: #a8741a;
     --long-bg: rgba(19,137,107,.10); --short-bg: rgba(207,68,54,.09); --wait-bg: rgba(168,116,26,.10);
-    --ema20: #b07a16; --ema50: #2f66c4; --bb: #7656c9; --draw: #b8860b; --fib: #1b8aa3;
+    --ema20: #b07a16; --ema50: #2f66c4; --ema200: #a87a0a; --dc: #1b8aa3; --bb: #7656c9; --draw: #b8860b; --fib: #1b8aa3;
     --long-dim: rgba(19,137,107,.4); --short-dim: rgba(207,68,54,.4);
     color-scheme: light;
   }
@@ -118,6 +118,18 @@ tr:last-child td { border-bottom: 0; }
 .draw-bar[hidden] { display: none; }
 .chart-legend.sub { padding-top: 4px; }
 .chart-legend .lg-bb { color: var(--bb); }
+.chart-legend .lg-e200 { color: var(--ema200); } .chart-legend .lg-dc { color: var(--dc); }
+.ind-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 14px 0; }
+.ind-tabs button { font-size: 12px; padding: 3px 9px; color: var(--muted); }
+.ind-tabs button.on { color: var(--fg); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ind-tabs .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+.btn-link { font-size: 12px; color: var(--fg); text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; background: var(--panel-2); white-space: nowrap; }
+.btn-link:hover { border-color: var(--accent); }
+.plan .kv .v { font-size: 15px; }
+.card.fs { position: fixed; inset: 0; z-index: 50; border-radius: 0; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); }
+.card.fs .state, .card.fs [data-plan], .card.fs [data-bt] { display: none; }
+.card.fs .chart { height: calc(100vh - 200px); min-height: 360px; }
+body.fs-open { overflow: hidden; }
 .chart-legend .ohlc { flex: 1 1 100%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 10px 14px 0; font-size: 11px; color: var(--muted); }
 .chart-legend .lg-e20 { color: var(--ema20); } .chart-legend .lg-e50 { color: var(--ema50); }
@@ -162,11 +174,12 @@ tr:last-child td { border-bottom: 0; }
       <span class="dot" id="dot"></span><span id="status">불러오는 중…</span>
       <button id="btn-refresh" type="button">지금 갱신</button>
       <button id="btn-notify" type="button">알림 켜기</button>
+      <a id="btn-news" class="btn-link" href="https://www.saveticker.com/news" target="_blank" rel="noopener">세이브티커 뉴스</a>
     </div>
   </header>
 
   <div class="warn">
-    <strong>참고용 신호입니다.</strong> 이 규칙들은 과거 데이터 백테스트에서 세 스타일 모두 손실이었습니다. 각 카드 아래 백테스트 숫자를 같이 보고 판단하세요. 신호는 마감된 봉 기준이며, 주문은 직접 하셔야 합니다. 투자 조언이 아닙니다.
+    <strong>참고용 신호입니다.</strong> 비트겟 선물 2022~2026년 데이터로 검증한 규칙(4시간봉 돈치안 돌파)이지만 앞으로의 수익을 보장하지 않습니다. 주문 금액과 배율은 아래 주문 안내로 확인하고, 주문은 직접 판단해서 하세요. 투자 조언이 아닙니다.
   </div>
 
   <section class="stats" id="stats" aria-label="파생 지표">
@@ -177,32 +190,23 @@ tr:last-child td { border-bottom: 0; }
     <div class="stat"><span class="label">24h 테이커 매수/매도</span><span class="v num" id="s-tbs">—</span><span class="h" id="s-tbs-h">—</span></div>
   </section>
 
-  <section class="panel">
-    <h2>타임프레임별 추세 <span class="muted" style="font-weight:400">마감된 봉 기준 · 상승 = 종가 &gt; EMA50 이고 EMA20 &gt; EMA50 &gt; EMA200</span></h2>
-    <div class="scroll">
-      <table id="trend-table">
-        <thead><tr><th>봉</th><th>추세</th><th>종가</th><th>RSI</th><th>EMA20</th><th>EMA50</th><th>EMA200</th><th>ATR</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
   <section class="cards" id="cards"></section>
 
   <section class="bottom">
     <div class="panel">
-      <h2>포지션 계산 설정</h2>
+      <h2>주문 계산 설정 <span class="muted" style="font-weight:400">이 기기에만 저장</span></h2>
       <div class="form">
-        <label for="in-acct">계좌 잔고 (USDT)<input id="in-acct" type="number" min="1" step="1" value="1000"></label>
-        <label for="in-risk">거래당 위험 (%)<input id="in-risk" type="number" min="0.1" max="10" step="0.1" value="1"></label>
-        <label for="in-lev">레버리지 (배)<input id="in-lev" type="number" min="1" max="125" step="1" value="10"></label>
+        <label for="in-seed">총 시드 (원)<input id="in-seed" type="number" min="1000" step="1000" value="200000"></label>
+        <label for="in-risk">손절 시 잃을 돈 (시드의 %)<input id="in-risk" type="number" min="0.1" max="50" step="0.1" value="2"></label>
+        <label for="in-lev">배율 (배)<input id="in-lev" type="number" min="1" max="150" step="1" value="30"></label>
+        <label for="in-fx">1 USDT = 원 (비우면 업비트)<input id="in-fx" type="number" min="100" step="1" placeholder="자동"></label>
       </div>
-      <p class="note">포지션 크기는 손절에 닿았을 때 계좌의 위험 %만 잃도록 계산합니다. 청산가는 유지증거금률 0.4%로 근사한 값이라 실제 비트겟 화면의 청산가와 조금 다를 수 있습니다.</p>
+      <p class="note">주문 크기는 '손절에 닿으면 시드의 몇 %를 잃을지'로 정합니다. 배율은 필요한 증거금과 청산가만 바꾸고 손실 금액은 바꾸지 않습니다. 시드의 40%를 증거금으로 넣는 방식은 2022~2026년 백테스트에서 30배·50배 모두 시드가 0이 됐습니다. 텔레그램 알림의 주문 안내는 GitHub 설정값(시드 200,000원 · 2% · 30배)을 씁니다.</p>
     </div>
     <div class="panel">
-      <h2>신호 기록 <span class="muted" style="font-weight:400">이 화면을 연 뒤 나온 신호와 손절·익절 도달</span></h2>
+      <h2>거래 기록 <span class="muted" style="font-weight:400">규칙대로 했을 때의 최근 진입·추가·청산</span></h2>
       <ul id="log"></ul>
-      <p class="empty" id="log-empty">아직 새 신호가 없습니다. 페이지를 열어 두면 봉이 마감될 때마다 확인합니다.</p>
+      <p class="empty" id="log-empty">기록을 불러오는 중입니다.</p>
     </div>
   </section>
 </div>
@@ -215,17 +219,14 @@ tr:last-child td { border-bottom: 0; }
 const BASE = "https://api.bitget.com/api/v2/mix/market";
 const SYM = "BTCUSDT", PT = "USDT-FUTURES";
 const TAKER_FEE = 0.0006, MMR = 0.004;
-const STYLES = [
-  { key: "scalp", name: "스캘핑", tf: "5m", htf: "1H", tfName: "5분봉" },
-  { key: "day", name: "데이트레이딩", tf: "15m", htf: "4H", tfName: "15분봉" },
-  { key: "swing", name: "스윙", tf: "4H", htf: "1D", tfName: "4시간봉" },
-];
-const TFS = ["5m", "15m", "1H", "4H", "1D"];
-const BARS = { "1m": 1500, "3D": 900, "5m": 10000, "15m": 10000, "1H": 9000, "4H": 4400, "1D": 2700 };  // 일봉·3일봉은 2019년부터
+const STYLES = [{ key: "main", name: "4시간봉 돌파 추세", tf: "4H", tfName: "4시간봉" }];
+const MAIN_TF = "4H";
+const TFS = [MAIN_TF];
+const BARS = { "1m": 1500, "5m": 3000, "15m": 3000, "1H": 3000, "4H": 16000, "1D": 2700, "3D": 900 };  // 4시간봉·일봉은 2019년부터
 const TF_MS = { "1m": 6e4, "5m": 3e5, "15m": 9e5, "1H": 3.6e6, "4H": 1.44e7, "1D": 8.64e7, "3D": 2.592e8 };
-// 차트에서 고를 수 있는 봉. 1분봉·3일봉은 차트 보기 전용이라 고를 때 받아 온다
-const CHART_TFS = [["1m", "1분"], ["5m", "5분"], ["15m", "15분"], ["4H", "4시간"], ["1D", "일봉"], ["3D", "3일봉"]];
-const VIEW_ONLY = ["1m", "3D"];
+// 차트에서 고를 수 있는 봉. 4시간봉 말고는 차트 보기 전용이라 고를 때 받아 온다
+const CHART_TFS = [["1m", "1분"], ["5m", "5분"], ["15m", "15분"], ["1H", "1시간"], ["4H", "4시간"], ["1D", "일봉"], ["3D", "3일봉"]];
+const VIEW_ONLY = ["1m", "5m", "15m", "1H", "1D", "3D"];
 const REFRESH_MS = 20000;
 const TREND_NAME = { 1: "상승", "-1": "하락", 0: "횡보" };
 const TREND_CLS = { 1: "up", "-1": "down", 0: "flat" };
@@ -327,154 +328,129 @@ function trend(ind, i) {
   return 0;
 }
 
-// ===== 신호 규칙 =====
-function signalAt(ind, i, ht) {
-  const { c, h, l } = ind, a = ind.atr[i], r = ind.rsi, hs = ind.hist, t = trend(ind, i);
-  const hi20 = maxR(h, i - 20, i), lo20 = minR(l, i - 20, i);
-  const volSpike = ind.v[i] > 1.5 * ind.vavg[i];
-  if (ht === 1 && t === 1) {
-    const touched = minR(l, i - 3, i + 1) <= ind.e20[i] + 0.3 * a;
-    if (touched && r[i - 1] < 50 && 50 <= r[i] && hs[i] > hs[i - 1]) return [1, "추세 눌림목 롱", "상위·현재 상승추세, EMA20 눌림 후 RSI 50 회복, MACD 반등"];
-  }
-  if (ht === -1 && t === -1) {
-    const touched = maxR(h, i - 3, i + 1) >= ind.e20[i] - 0.3 * a;
-    if (touched && r[i - 1] > 50 && 50 >= r[i] && hs[i] < hs[i - 1]) return [-1, "추세 되돌림 숏", "상위·현재 하락추세, EMA20 반등 후 RSI 50 이탈, MACD 하락"];
-  }
-  if (c[i] > hi20 && volSpike && ht >= 0 && r[i] < 75) return [1, "거래량 돌파 롱", `20봉 고점 ${fmt0(hi20)} 종가 돌파, 거래량 평균의 1.5배 이상`];
-  if (c[i] < lo20 && volSpike && ht <= 0 && r[i] > 25) return [-1, "거래량 이탈 숏", `20봉 저점 ${fmt0(lo20)} 종가 이탈, 거래량 평균의 1.5배 이상`];
-  if (t === 0 && ht === 0) {
-    if (c[i - 1] < ind.bl[i - 1] && c[i] > ind.bl[i] && r[i - 1] < 30) return [1, "횡보 하단 반등 롱", "볼린저 하단 이탈 후 복귀, RSI 과매도"];
-    if (c[i - 1] > ind.bu[i - 1] && c[i] < ind.bu[i] && r[i - 1] > 70) return [-1, "횡보 상단 반락 숏", "볼린저 상단 이탈 후 복귀, RSI 과매수"];
-  }
-  return [0, "관망", ""];
+// ===== 전략: 4시간봉 돈치안 돌파 (strategy.py 와 같은 규칙) =====
+// 진입: 4시간봉 종가가 직전 20봉 최고가 위 + EMA200 위 → 롱 / 20봉 최저가 아래 + EMA200 아래 → 숏.
+//       다음 봉 시가에 계획 물량의 40%. 1R(처음 손절폭)만큼 유리하게 가면 나머지 60% 추가, 손절은 본전 이상.
+// 손절: 처음 ATR x2. 마감된 봉마다 (진입 후 최고가 - ATR x3)으로 따라감 (숏은 반대). 익절 목표 없음.
+// 검증: 비트겟 선물 2022-01~2026-10 254회, 연도별 모두 플러스, 최대 낙폭 7.1R (수수료 포함).
+const BREAK_N = 20, STOP_ATR = 2, TRAIL_ATR = 3, FIRST = 0.4, FEE_IN = 0.0002, FEE_OUT = 0.0006;
+const DIR = { 1: "롱", "-1": "숏" };
+
+function stratSignal(ind, k) {
+  if (k < Math.max(210, BREAK_N)) return 0;
+  const c = ind.c[k];
+  if (c > maxR(ind.h, k - BREAK_N, k) && c > ind.e200[k]) return 1;
+  if (c < minR(ind.l, k - BREAK_N, k) && c < ind.e200[k]) return -1;
+  return 0;
 }
-function levels(ind, i, d) {
-  const entry = ind.c[i], a = ind.atr[i];
-  const stop = d === 1 ? Math.min(minR(ind.l, i - 5, i + 1) - 0.2 * a, entry - 1.5 * a)
-                       : Math.max(maxR(ind.h, i - 5, i + 1) + 0.2 * a, entry + 1.5 * a);
-  const risk = Math.abs(entry - stop);
-  return { entry, stop, t1: entry + d * 1.5 * risk, t2: entry + d * 3 * risk };
-}
-function mapHtf(ts, htfTs, tfMs, htfMs) {
-  const out = []; let j = -1;
-  for (const t of ts) {
-    const closeT = t + tfMs;
-    while (j + 1 < htfTs.length && htfTs[j + 1] + htfMs <= closeT) j++;
-    out.push(j >= 0 ? j : null);
+
+// 처음부터 규칙대로 거래를 재현. live면 마지막 봉은 진행 중으로 보고 손절·추가 판정만 한다.
+function replay(ind, live = true) {
+  const n = ind.c.length, last = live ? n - 2 : n - 1, out = [];
+  let k = 210;
+  while (k <= last) {
+    const d = stratSignal(ind, k);
+    if (!d) { k++; continue; }
+    const risk = STOP_ATR * ind.atr[k];
+    if (k + 1 >= n) {  // 신호는 나왔고 다음 봉이 아직 안 열림
+      const e = ind.c[k];
+      out.push({ d, sigK: k, ts: ind.ts[k], state: "pending", entry: e, risk, stop: e - d * risk, addPx: e + d * risk,
+                 added: false, events: [["signal", k, e]] });
+      break;
+    }
+    const e = ind.o[k + 1];
+    const t = { d, sigK: k, ts: ind.ts[k], entryK: k + 1, entry: e, risk, stop: e - d * risk, addPx: e + d * risk,
+                added: false, best: e, mae: 0, legs: [[e, FIRST]], events: [["signal", k, ind.c[k]], ["entry", k + 1, e]],
+                exitK: null, exitPx: null, state: "open" };
+    let m = k + 1;
+    for (; m < n; m++) {
+      const hi = ind.h[m], lo = ind.l[m];
+      t.mae = Math.max(t.mae, d === 1 ? (e - lo) / e : (hi - e) / e);
+      if (d === 1 ? lo <= t.stop : hi >= t.stop) {
+        t.exitK = m; t.exitPx = t.stop; t.state = "closed"; t.events.push(["exit", m, t.stop]);
+        break;
+      }
+      t.best = d === 1 ? Math.max(t.best, hi) : Math.min(t.best, lo);
+      if (!t.added && (t.best - e) * d >= risk) {
+        t.added = true; t.legs.push([t.addPx, 1 - FIRST]); t.events.push(["add", m, t.addPx]);
+        t.stop = d === 1 ? Math.max(t.stop, e) : Math.min(t.stop, e);
+      }
+      if (live && m === n - 1) break;  // 진행 중인 봉으로는 추적 손절을 올리지 않음
+      const trail = t.best - d * TRAIL_ATR * ind.atr[m];
+      const nw = d === 1 ? Math.max(t.stop, trail) : Math.min(t.stop, trail);
+      if (nw !== t.stop) { t.stop = nw; t.events.push(["trail", m, nw]); }
+    }
+    const px = t.exitPx ?? ind.c[n - 1];
+    t.r = t.legs.reduce((s, [p, w]) => s + w * ((px - p) * d / risk - (FEE_IN + FEE_OUT) * p / risk), 0);
+    t.bars = (t.exitK ?? n - 1) - t.entryK + 1;
+    out.push(t);
+    if (t.state !== "closed") break;
+    k = t.exitK + 1;
   }
   return out;
 }
-const htfTrendAt = (hind, j) => (j !== null && j >= 200) ? trend(hind, j) : 0;
-function backtest(ind, hind, hmap) {
-  const res = [], fees = [], byKind = {}, n = ind.c.length; let i = 210;
-  while (i < n - 2) {
-    const [d, kind] = signalAt(ind, i, htfTrendAt(hind, hmap[i]));
-    if (!d) { i++; continue; }
-    const { stop } = levels(ind, i, d);
-    const entry = ind.o[i + 1], risk = Math.abs(entry - stop);
-    if (risk <= 0 || (stop - entry) * d > 0) { i++; continue; }
-    const tp = entry + d * 2 * risk, feeR = 2 * TAKER_FEE * entry / risk;
-    let out = null, k = i + 1;
-    for (k = i + 1; k < Math.min(n, i + 49); k++) {
-      const hitStop = d === 1 ? ind.l[k] <= stop : ind.h[k] >= stop;
-      const hitTp = d === 1 ? ind.h[k] >= tp : ind.l[k] <= tp;
-      if (hitStop) { out = -1; break; }
-      if (hitTp) { out = 2; break; }
-    }
-    if (out === null) { k = Math.min(n, i + 49) - 1; out = (ind.c[k] - entry) * d / risk; }
-    res.push(out - feeR); fees.push(feeR);
-    (byKind[kind] = byKind[kind] || []).push(out - feeR);
-    i = k + 1;
-  }
-  if (!res.length) return null;
-  const sum = res.reduce((a, b) => a + b, 0);
+
+// 주문 크기: 손절에 닿으면 시드의 settings.risk%만 잃도록 계획 물량을 잡고 1차 40% / 추가 60%로 나눔
+function orderPlan(entry, stopPct) {
+  const fx = settings.fx || state.fx, lev = settings.lev, seed = settings.seed;
+  const loss = seed * settings.risk / 100, notional = loss / stopPct;   // 원
+  const first = notional * FIRST, add = notional * (1 - FIRST);
+  const btc = krw => Math.max(0.0001, Math.round(krw / fx / entry * 1e4) / 1e4);
+  const liq = 1 / lev - MMR;
   return {
-    n: res.length, win: res.filter(x => x > 0).length / res.length, exp: sum / res.length, total: sum,
-    fee: fees.reduce((a, b) => a + b, 0) / fees.length, bars: n,
-    days: (ind.ts[n - 1] - ind.ts[0]) / 8.64e7,
-    kinds: Object.entries(byKind).map(([k, v]) => [k, v.length, v.reduce((a, b) => a + b, 0) / v.length]).sort((a, b) => b[2] - a[2]),
+    loss, notional, fx, lev, liq, safeLev: Math.max(1, Math.floor(0.8 / (stopPct + MMR))),
+    first: { margin: first / lev, btc: btc(first) }, add: { margin: add / lev, btc: btc(add) },
+    liqFirst: stopPct >= liq * 0.9,
   };
 }
-const liqDistance = lev => 1 / lev - MMR;
 
-// 신호 이후 어느 봉에서 손절·1차 익절·2차 익절에 닿았는지 (같은 봉이면 손절 먼저로 보수적으로 처리)
-function tradePath(ind, k, d, lv, end) {
-  const ev = []; let status = "진행 중", t1hit = false;
-  for (let m = k + 1; m <= end; m++) {
-    const hitStop = d === 1 ? ind.l[m] <= lv.stop : ind.h[m] >= lv.stop;
-    const hitT1 = d === 1 ? ind.h[m] >= lv.t1 : ind.l[m] <= lv.t1;
-    const hitT2 = d === 1 ? ind.h[m] >= lv.t2 : ind.l[m] <= lv.t2;
-    if (hitStop) { ev.push([m, "stop"]); status = t1hit ? "1차 익절 후 손절" : "손절"; break; }
-    if (!t1hit && hitT1) { t1hit = true; ev.push([m, "t1"]); status = "1차 익절 도달"; }
-    if (hitT2) { ev.push([m, "t2"]); status = "2차 익절 도달"; break; }
+// 백테스트 요약과, 지금 설정(시드·위험·배율)으로 따라 했을 때의 시드 변화
+function btSummary(trades) {
+  const tr = trades.filter(t => t.state === "closed");
+  if (!tr.length) return null;
+  const rs = tr.map(t => t.r), g = rs.filter(r => r > 0).reduce((a, b) => a + b, 0), l = -rs.filter(r => r < 0).reduce((a, b) => a + b, 0);
+  let eq = 0, pk = 0, dd = 0;
+  for (const r of rs) { eq += r; pk = Math.max(pk, eq); dd = Math.max(dd, pk - eq); }
+  const years = {};
+  for (const t of tr) { const y = new Date(t.ts).getUTCFullYear(); years[y] = (years[y] || 0) + t.r; }
+  // 시드 시뮬레이션: 손절이 청산보다 멀면, 청산까지 가는 거래는 1차 증거금을 잃고 끝난 것으로 본다
+  const liq = 1 / settings.lev - MMR;
+  let seed = settings.seed, peak = seed, mdd = 0, liqs = 0;
+  for (const t of tr) {
+    const stopPct = t.risk / t.entry, riskKrw = seed * settings.risk / 100;
+    if (stopPct >= liq && t.mae >= liq) { seed -= riskKrw / stopPct * FIRST / settings.lev; liqs++; }
+    else seed += riskKrw * t.r;
+    seed = Math.max(seed, 0); peak = Math.max(peak, seed); mdd = Math.max(mdd, peak ? 1 - seed / peak : 1);
   }
-  return { ev, status };
+  return {
+    n: tr.length, win: rs.filter(r => r > 0).length / tr.length, be: rs.filter(r => r > -0.15 && r <= 0).length / tr.length,
+    total: rs.reduce((a, b) => a + b, 0), pf: l ? g / l : 99, dd, years, from: tr[0].ts,
+    seed, mdd, liqs,
+  };
 }
 
 // ===== 상태 =====
-const state = { inds: {}, results: {}, ctx: null, bt: {}, lastLogged: {}, alerted: new Set(), firstRun: true };
-let settings = { acct: 1000, risk: 1, lev: 10 };
-try { Object.assign(settings, JSON.parse(localStorage.getItem("btc-dash-settings") || "{}")); } catch (e) {}
-let logItems = [];
-try { logItems = JSON.parse(localStorage.getItem("btc-dash-log") || "[]"); } catch (e) {}
+const state = { inds: {}, results: {}, ctx: null, trades: [], cur: null, alerted: new Set(), firstRun: true, fx: 1400, backfilling: true };
+let settings = { seed: 200000, risk: 2, lev: 30, fx: 0 };  // fx 0 = 업비트 USDT 시세 자동
+try { Object.assign(settings, JSON.parse(localStorage.getItem("btc-dash-order") || "{}")); } catch (e) {}
 
-function compute(withBacktest) {
+function compute() {
   for (const tf of TFS) if (store[tf].size > 210) state.inds[tf] = indicators(series(tf));
   for (const tf of VIEW_ONLY) if (store[tf].size > 30) state.inds[tf] = indicators(series(tf));
-  for (const s of STYLES) {
-    const ind = state.inds[s.tf], hind = state.inds[s.htf];
-    if (!ind || !hind) continue;
-    const i = ind.c.length - 2, hi = hind.c.length - 2;
-    const ht = trend(hind, hi);
-    const [d, kind, why] = signalAt(ind, i, ht);
-    const hmap = mapHtf(ind.ts, hind.ts, TF_MS[s.tf], TF_MS[s.htf]);
-    let last = null;
-    if (!d) for (let k = i - 1; k > 210; k--) {
-      const [dd, kk] = signalAt(ind, k, htfTrendAt(hind, hmap[k]));
-      if (dd) { last = { k, kind: kk, d: dd, ago: i - k, price: ind.c[k] }; break; }
-    }
-    const marks = [];
-    for (let k = Math.max(211, i - 89); k <= i; k++) {
-      const [dd, kk] = signalAt(ind, k, htfTrendAt(hind, hmap[k]));
-      if (dd) marks.push([k, dd, kk]);
-    }
-    // 차트에 가격을 그려 줄 신호: 지금 신호, 없으면 차트 안의 가장 최근 신호
-    // 손절·익절 도달은 진행 중인 봉의 고가·저가까지 본다 (20초마다 갱신)
-    const live = ind.c.length - 1;
-    let focus = null;
-    const fk = d ? [i, d, kind] : marks[marks.length - 1];
-    if (fk) {
-      const lv = levels(ind, fk[0], fk[1]);
-      focus = { k: fk[0], d: fk[1], kind: fk[2], lv, ago: i - fk[0], ...tradePath(ind, fk[0], fk[1], lv, live) };
-    }
-    // 차트 안 모든 신호의 손절·익절 도달 알림 (처음 열 때 이미 지난 것은 조용히 기록만)
-    for (const [k, dd] of marks) {
-      const lv = levels(ind, k, dd);
-      for (const [m, ev] of tradePath(ind, k, dd, lv, live).ev) {
-        const key = `${s.key}|${ind.ts[k]}|${ev}`;
-        if (state.alerted.has(key)) continue;
-        state.alerted.add(key);
-        if (state.firstRun) continue;
-        const price = lv[ev];
-        logItems.unshift({ style: s.key, ts: ind.ts[k], at: Date.now(), d: dd, kind: EV_NAME[ev], ev, price });
-        logItems = logItems.slice(0, 50);
-        try { localStorage.setItem("btc-dash-log", JSON.stringify(logItems)); } catch (e) {}
-        alertEvent(s, dd, ev, price, lv.entry);
-      }
-    }
-    state.results[s.key] = { i, ht, d, kind, why, last, marks, focus, lv: d ? levels(ind, i, d) : null, ts: ind.ts[i] };
-    if (withBacktest && backfilled[s.tf] && backfilled[s.htf]) state.bt[s.key] = backtest(ind, hind, hmap);
-    // 새 신호 기록
-    if (d && state.lastLogged[s.key] !== ind.ts[i]) {
-      state.lastLogged[s.key] = ind.ts[i];
-      const known = logItems.some(x => x.style === s.key && x.ts === ind.ts[i]);
-      if (!known) {
-        logItems.unshift({ style: s.key, ts: ind.ts[i], at: ind.ts[i] + TF_MS[s.tf], d, kind, price: ind.c[i] });
-        logItems = logItems.slice(0, 50);
-        try { localStorage.setItem("btc-dash-log", JSON.stringify(logItems)); } catch (e) {}
-        if (!state.firstRun) alertSignal(s, d, kind, ind.c[i], why);
-      }
-    }
+  const ind = state.inds[MAIN_TF];
+  if (!ind) return;
+  const trades = replay(ind, true);
+  state.trades = trades;
+  const last = trades[trades.length - 1];
+  state.cur = last && last.state !== "closed" ? last : null;
+  state.results.main = { trades };
+  // 새로 생긴 일(신호·추가 진입·청산)은 소리와 알림으로. 처음 열 때 이미 지난 일은 조용히 기록만
+  for (const t of trades.slice(-3)) for (const [kind, m, px] of t.events) {
+    if (kind === "entry" || kind === "trail") continue;
+    const key = `${kind}|${t.ts}|${ind.ts[m]}`;
+    if (state.alerted.has(key)) continue;
+    state.alerted.add(key);
+    if (!state.firstRun) alertTrade(kind, t, px);
   }
   state.firstRun = false;
 }
@@ -499,24 +475,22 @@ function tone(freq, delay = 0, dur = 0.3) {
 function alarm(d, seconds = 5, delay = 0) {
   for (let t = 0; t < seconds; t += 0.5) beep(d, delay + t);
 }
-function alertSignal(s, d, kind, price, why) {
-  alarm(d, 5);
-  if ("Notification" in window && Notification.permission === "granted") {
-    try { new Notification(`${s.name}(${s.tfName}) ${d === 1 ? "롱" : "숏"} 신호`, { body: `${kind} · ${fmt(price)}${why ? "\n이유: " + why : ""}` }); } catch (e) {}
-  }
-}
-// 익절은 올라가는 '띵-동'을, 손절은 낮고 긴 '부-'를 5초 동안 반복
-const EV_NAME = { t1: "1차 익절 도달", t2: "2차 익절 도달", stop: "손절 도달" };
-function eventAlarm(ev, seconds = 5) {
+// 수익은 올라가는 '띵-동', 손실은 낮고 긴 '부-'를 5초 동안
+function eventAlarm(good, seconds = 5) {
   for (let t = 0; t < seconds; t += 0.6) {
-    if (ev === "stop") tone(300, t, 0.4);
-    else { tone(660, t, 0.15); tone(ev === "t2" ? 1320 : 990, t + 0.18, 0.15); }
+    if (!good) tone(300, t, 0.4);
+    else { tone(660, t, 0.15); tone(990, t + 0.18, 0.15); }
   }
 }
-function alertEvent(s, d, ev, price, entry) {
-  eventAlarm(ev);
+function alertTrade(kind, t, px) {
+  const r = kind === "exit" ? t.r : 0;
+  if (kind === "signal") alarm(t.d, 5); else eventAlarm(kind === "add" || r > 0);
+  const title = { signal: `4시간봉 돌파 ${DIR[t.d]} 신호`, add: `${DIR[t.d]} 1R 도달 · 추가 진입`, exit: `${DIR[t.d]} 청산 ${r >= 0 ? "+" : ""}${r.toFixed(2)}R` }[kind];
+  const body = kind === "signal" ? `다음 봉 시가 근처 ${fmt(px)} · 손절 ${fmt(t.stop)} · 계획 물량의 40%`
+             : kind === "add" ? `${fmt(px)} 도달 · 나머지 60% 추가, 손절 본전 ${fmt(t.entry)}`
+             : `${fmt(px)}에서 정리 · 진입 ${fmt(t.entry)}`;
   if ("Notification" in window && Notification.permission === "granted") {
-    try { new Notification(`${s.name}(${s.tfName}) ${d === 1 ? "롱" : "숏"} · ${EV_NAME[ev]}`, { body: `${fmt(price)} 도달 · 진입가 ${fmt(entry)}` }); } catch (e) {}
+    try { new Notification(title, { body }); } catch (e) {}
   }
 }
 $("btn-notify").addEventListener("click", async () => {
@@ -553,133 +527,121 @@ function renderTop() {
   $("s-tbs-h").textContent = c.tbs > 1.05 ? "시장가 매수 우세" : c.tbs < 0.95 ? "시장가 매도 우세" : "균형";
 }
 
-function renderTrend() {
-  const tb = document.querySelector("#trend-table tbody"); tb.textContent = "";
-  for (const tf of TFS) {
-    const ind = state.inds[tf]; if (!ind) continue;
-    const i = ind.c.length - 2, t = trend(ind, i);
-    const tr = document.createElement("tr");
-    const cells = [tf, null, fmt(ind.c[i]), ind.rsi[i].toFixed(1), fmt0(ind.e20[i]), fmt0(ind.e50[i]), fmt0(ind.e200[i]), fmt0(ind.atr[i])];
-    cells.forEach((v, n) => {
-      const td = document.createElement("td");
-      if (n === 1) { const sp = document.createElement("span"); sp.className = "chip " + TREND_CLS[t]; sp.textContent = TREND_NAME[t]; td.appendChild(sp); }
-      else { td.textContent = v; if (n > 0) td.className = "num"; }
-      tr.appendChild(td);
-    });
-    tb.appendChild(tr);
-  }
-}
+const IND_TOGGLES = [["e200", "EMA200"], ["dc", "돈치안 20"], ["ema", "EMA20·50"], ["bb", "볼린저"], ["vol", "거래량"]];
+let indOn = { e200: true, dc: true, ema: false, bb: false, vol: true, log: false };
+try { Object.assign(indOn, JSON.parse(localStorage.getItem("btc-dash-ind") || "{}")); } catch (e) {}
 
 function cardSkeleton(s) {
   const el = document.createElement("article");
   el.className = "card"; el.id = "card-" + s.key;
   el.innerHTML = `
-    <div class="card-head"><h3>${s.name} (${s.tfName})<span>상위 ${s.htf} 추세 기준</span></h3><span class="countdown num" data-cd></span></div>
+    <div class="card-head"><h3>${s.name}<span>20봉 돌파 + EMA200 · 손절 ATR×2 → 추적 ATR×3 · 40% 진입, 1R에서 60% 추가</span></h3><span class="countdown num" data-cd></span></div>
     <div class="state wait" data-state><span class="big">계산 중</span><span class="why">데이터를 불러오는 중입니다</span></div>
+    <div class="sec plan" data-plan></div>
     <div class="tf-tabs" role="group" aria-label="차트 봉 선택">${CHART_TFS.map(([tf, label]) =>
       `<button type="button" data-tf="${tf}"${tf === s.tf ? ' class="sig" title="신호 기준 봉"' : ""}>${label}</button>`).join("")}</div>
+    <div class="ind-tabs" role="group" aria-label="지표">${IND_TOGGLES.map(([k, label]) =>
+      `<button type="button" data-ind="${k}" class="${indOn[k] ? "on" : ""}">${label}</button>`).join("")}
+      <span class="sep"></span>
+      <button type="button" data-view="log" class="${indOn.log ? "on" : ""}">로그 눈금</button>
+      <button type="button" data-view="fs">전체 화면</button>
+    </div>
     <div class="chart-tools">
       <button type="button" data-tool="line">추세선</button>
       <button type="button" data-tool="hline">수평선</button>
       <button type="button" data-tool="fib">피보나치 채널</button>
+      <button type="button" data-tool="measure">측정</button>
       <button type="button" data-tool="undo">되돌리기</button>
       <button type="button" data-tool="clear">모두 지우기</button>
       <span class="sync-note">${cloud ? "그린 선: 텔레그램 기기끼리 동기화" : "그린 선: 이 기기에만 저장 (텔레그램에서 열면 동기화)"}</span>
     </div>
-    <div class="chart-legend num" data-legend><span class="lg-e20">EMA20</span><span class="lg-e50">EMA50</span><span class="lg-bb">볼린저(20,2)</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted ohlc" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
+    <div class="chart-legend num" data-legend><span class="lg-e200">EMA200</span><span class="lg-dc">돈치안 20</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted ohlc" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
     <div class="chart-wrap"><div class="chart" data-chart></div><button type="button" class="chart-reset" data-reset>차트 초기화</button><div class="tool-hint" data-hint></div>
       <div class="draw-bar" data-drawbar hidden><span data-drawname></span><button type="button" data-act="lock">잠금</button><button type="button" data-act="del">삭제</button><button type="button" data-act="close" aria-label="선택 해제">닫기</button></div></div>
     <div class="chart-legend num sub"><span>아래 창: RSI(14) · MACD(12,26,9)</span></div>
-    <div class="sec" data-levels></div>
     <div class="sec" data-bt><span class="label">백테스트</span><span class="note">과거 데이터를 불러오는 중…</span></div>`;
   return el;
 }
 
+const krw = x => Number.isFinite(x) ? Math.round(x).toLocaleString("ko-KR") + "원" : "—";
+const sp = (x, d = 1) => `${x >= 0 ? "+" : ""}${x.toFixed(d)}`;
+
+// 주문 안내 (1차 40% · 추가 60%) — 신호가 있을 때는 그 신호, 없을 때는 '지금 신호가 나온다면'
+function planHtml(entry, stopPct, d, title) {
+  const p = orderPlan(entry, stopPct), seed = settings.seed;
+  const liqPx = entry * (1 - d * p.liq);
+  return `
+    <span class="label">${title}</span>
+    <div class="kv">
+      <div><span class="note">1차 진입 증거금 (40%)</span><span class="v">${krw(p.first.margin)}</span><span class="note">시드의 ${(p.first.margin / seed * 100).toFixed(1)}% · ${p.first.btc.toFixed(4)} BTC</span></div>
+      <div><span class="note">추가 진입 증거금 (60%)</span><span class="v">${krw(p.add.margin)}</span><span class="note">시드의 ${(p.add.margin / seed * 100).toFixed(1)}% · ${p.add.btc.toFixed(4)} BTC</span></div>
+      <div><span class="note">손절 시 손실 (둘 다 진입 기준)</span><span class="v short">${krw(p.loss)}</span><span class="note">시드의 ${settings.risk}%</span></div>
+      <div><span class="note">${p.lev}배 청산가 (1차 기준)</span><span class="v ${p.liqFirst ? "short" : ""}">${fmt0(liqPx)}</span><span class="note">손절폭 ${(stopPct * 100).toFixed(2)}% · 청산 거리 ${(p.liq * 100).toFixed(2)}%</span></div>
+    </div>
+    <p class="note ${p.liqFirst ? "bad" : ""}">${p.liqFirst
+      ? `${p.lev}배에서는 손절보다 청산이 먼저 올 수 있어요. 이번 신호는 ${p.safeLev}배 이하로 하세요. (증거금은 배율이 낮아지면 그만큼 커지지만 손실 금액은 같습니다)`
+      : `${p.lev}배에서도 손절이 청산보다 먼저 옵니다 (안전 배율 ${p.safeLev}배 이하). 배율이 높아도 손절 시 손실은 똑같이 ${krw(p.loss)}입니다.`}
+      환율 1 USDT = ${fmt0(p.fx)}원${settings.fx ? "" : " (업비트)"}.</p>`;
+}
+
 function renderCard(s) {
-  const el = $("card-" + s.key), r = state.results[s.key], ind = state.inds[s.tf];
-  if (!r || !ind) return;
-  const st = el.querySelector("[data-state]");
-  const htName = TREND_NAME[r.ht];
-  if (r.d) {
-    st.className = "state " + (r.d === 1 ? "long" : "short");
-    st.innerHTML = `<span class="big">${r.d === 1 ? "롱 진입 신호" : "숏 진입 신호"}</span><span class="why"></span>`;
-    st.querySelector(".why").textContent = `${r.kind} · ${r.why}`;
+  const el = $("card-" + s.key), ind = state.inds[s.tf];
+  if (!ind) return;
+  const t = state.cur, st = el.querySelector("[data-state]"), plan = el.querySelector("[data-plan]");
+  const i = ind.c.length - 2, now = state.ctx ? state.ctx.price : ind.c[ind.c.length - 1];
+  if (t && t.state === "pending") {
+    st.className = "state " + (t.d === 1 ? "long" : "short");
+    st.innerHTML = `<span class="big">${DIR[t.d]} 신호 · 다음 봉 시가에 진입</span><span class="why"></span>`;
+    st.querySelector(".why").textContent = `종가 ${fmt(ind.c[t.sigK])}가 직전 20봉 ${t.d === 1 ? "최고가 " + fmt(maxR(ind.h, t.sigK - 20, t.sigK)) + "를 넘었고 EMA200 위" : "최저가 " + fmt(minR(ind.l, t.sigK - 20, t.sigK)) + "를 깼고 EMA200 아래"}`;
+  } else if (t) {
+    const rNow = (now - t.entry) * t.d / t.risk;
+    st.className = "state " + (t.d === 1 ? "long" : "short");
+    st.innerHTML = `<span class="big">${DIR[t.d]} 진행 중 · 지금 ${sp(rNow)}R</span><span class="why"></span>`;
+    st.querySelector(".why").textContent = `${new Date(t.ts + TF_MS["4H"]).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 신호 · 진입 ${fmt(t.entry)} · ${t.added ? "추가 진입 완료, 손절 본전 이상" : "추가 진입 대기"}`;
   } else {
+    const hi = maxR(ind.h, i - 19, i + 1), lo = minR(ind.l, i - 19, i + 1), e200 = ind.e200[i];
+    const lastT = state.trades.filter(x => x.state === "closed").pop();
     st.className = "state wait";
-    st.innerHTML = `<span class="big">관망</span><span class="why"></span>`;
-    st.querySelector(".why").textContent = `조건 충족 없음 · 상위 ${s.htf} ${htName}` +
-      (r.last ? ` · 마지막 신호 ${r.last.kind} (${r.last.ago}봉 전, ${fmt0(r.last.price)})` : "");
+    st.innerHTML = `<span class="big">관망 · 포지션 없음</span><span class="why"></span>`;
+    st.querySelector(".why").textContent = `다음 신호: 4시간봉 종가가 ${fmt0(hi)} 위 (EMA200 ${fmt0(e200)} 위일 때) → 롱 · ${fmt0(lo)} 아래 (EMA200 아래일 때) → 숏`
+      + (lastT ? ` · 지난 거래 ${DIR[lastT.d]} ${sp(lastT.r, 2)}R` : "");
   }
-  // 레벨 / 다음 봉 기준선
-  const lv = el.querySelector("[data-levels]");
-  const i = r.i;
-  if (r.d) {
-    const L = r.lv, stopPct = Math.abs(L.entry - L.stop) / L.entry;
-    const lev = settings.lev, liq = liqDistance(lev);
-    const notional = settings.acct * settings.risk / 100 / stopPct, margin = notional / lev;
-    const liqOk = liq > 0 && stopPct < liq * 0.8;
-    const feeR = 2 * TAKER_FEE / stopPct;
-    const dc = r.d === 1 ? "long" : "short";
-    lv.innerHTML = `
-      <span class="label">진입 · 손절 · 익절</span>
+  // 주문 안내
+  if (t) {
+    const stopPct = t.risk / t.entry, dc = t.d === 1 ? "long" : "short";
+    plan.innerHTML = `
+      <span class="label">진입 · 손절 · 추가 진입</span>
       <div class="kv">
-        <div><span class="note">진입 (봉 종가)</span><span class="v">${fmt(L.entry)}</span></div>
-        <div><span class="note">손절</span><span class="v short">${fmt(L.stop)}</span></div>
-        <div><span class="note">1차 익절 (1.5R)</span><span class="v long">${fmt(L.t1)}</span></div>
-        <div><span class="note">2차 익절 (3R)</span><span class="v long">${fmt(L.t2)}</span></div>
-      </div>
-      <div class="kv">
-        <div><span class="note">손절폭</span><span class="v">${pct(stopPct)}</span></div>
-        <div><span class="note">${lev}배 청산 거리</span><span class="v ${liqOk ? "" : "short"}">${pct(liq, 1)}</span></div>
-        <div><span class="note">포지션 명목가</span><span class="v">${fmt0(notional)} USDT</span></div>
-        <div><span class="note">필요 증거금</span><span class="v ${margin > settings.acct ? "short" : ""}">${fmt0(margin)} USDT</span></div>
-        <div><span class="note">수량</span><span class="v">${(notional / L.entry).toFixed(3)} BTC</span></div>
-        <div><span class="note">왕복 수수료</span><span class="v">${feeR.toFixed(2)}R</span></div>
-      </div>
-      <p class="note ${liqOk ? "" : "bad"}">${liqOk ? `${lev}배에서는 손절가가 청산가보다 먼저 옵니다.` : `${lev}배에서는 손절 전에 청산될 수 있습니다. 레버리지를 낮추세요.`}${margin > settings.acct ? " 필요 증거금이 잔고보다 큽니다. 위험 %를 낮추거나 레버리지를 올려야 합니다." : ""}</p>`;
+        <div><span class="note">진입 (계획 물량의 40%)</span><span class="v">${fmt(t.entry)}</span></div>
+        <div><span class="note">손절 ${t.state === "open" && t.stop !== t.entry - t.d * t.risk ? "(추적 중)" : "(ATR×2)"}</span><span class="v short">${fmt(t.stop)}</span></div>
+        <div><span class="note">추가 진입 (1R, 나머지 60%)</span><span class="v ${dc}">${t.added ? "완료" : fmt(t.addPx)}</span></div>
+        <div><span class="note">익절</span><span class="v">추적 손절로</span></div>
+      </div>` + planHtml(t.entry, stopPct, t.d, "주문 안내 · 주문 넣기 전에 확인하세요");
   } else {
-    const hi = maxR(ind.h, i - 19, i + 1), lo = minR(ind.l, i - 19, i + 1);
-    const okLong = r.ht >= 0, okShort = r.ht <= 0;
-    lv.innerHTML = `
-      <span class="label">다음 봉에서 볼 기준선</span>
-      <div class="kv">
-        <div><span class="note">돌파 롱: 종가 &gt;</span><span class="v ${okLong ? "long" : ""}">${fmt0(hi)}</span></div>
-        <div><span class="note">이탈 숏: 종가 &lt;</span><span class="v ${okShort ? "short" : ""}">${fmt0(lo)}</span></div>
-        <div><span class="note">EMA20 (눌림 기준)</span><span class="v">${fmt0(ind.e20[i])}</span></div>
-        <div><span class="note">거래량 기준</span><span class="v">${fmt0(1.5 * ind.vavg[i + 1 < ind.v.length ? i + 1 : i])} BTC</span></div>
-      </div>
-      <p class="note">돌파·이탈은 거래량이 평균의 1.5배 이상일 때만 신호입니다. 상위 ${s.htf}가 ${htName}이라 ${okLong && okShort ? "롱·숏 돌파 모두" : okLong ? "롱 돌파만" : "숏 이탈만"} 유효합니다.</p>`;
-    const f = r.focus;
-    if (f) {
-      const dc = f.d === 1 ? "long" : "short";
-      const stCls = f.status.includes("손절") ? "short" : f.status.includes("익절") ? "long" : "";
-      lv.insertAdjacentHTML("beforeend", `
-        <span class="label">차트의 최근 신호 · ${f.ago}봉 전 ${f.d === 1 ? "롱" : "숏"}</span>
-        <div class="kv">
-          <div><span class="note">진입</span><span class="v">${fmt(f.lv.entry)}</span></div>
-          <div><span class="note">손절</span><span class="v short">${fmt(f.lv.stop)}</span></div>
-          <div><span class="note">1차 익절</span><span class="v long">${fmt(f.lv.t1)}</span></div>
-          <div><span class="note">2차 익절</span><span class="v long">${fmt(f.lv.t2)}</span></div>
-          <div><span class="note">결과</span><span class="v ${stCls}">${f.status}</span></div>
-        </div>`);
-      lv.lastElementChild.previousElementSibling.textContent += ` · ${f.kind}`;
-    }
+    const a = ind.atr[i], c = ind.c[i];
+    plan.innerHTML = planHtml(c, STOP_ATR * a / c, 1, "지금 신호가 나온다면 · 주문 안내 미리 보기");
   }
   // 백테스트
-  const btEl = el.querySelector("[data-bt]"), bt = state.bt[s.key];
+  const bt = btSummary(state.trades), btEl = el.querySelector("[data-bt]");
   if (bt) {
+    const yrs = Object.entries(bt.years);
     btEl.innerHTML = `
-      <span class="label">백테스트 · 약 ${Math.round(bt.days)}일 · 수수료 반영</span>
+      <span class="label">백테스트 · ${new Date(bt.from).getFullYear()}년 ~ 지금 · 수수료 포함${state.backfilling ? " · 과거 데이터 받는 중" : ""}</span>
       <div class="kv">
         <div><span class="note">거래</span><span class="v">${bt.n}회</span></div>
-        <div><span class="note">승률</span><span class="v">${(bt.win * 100).toFixed(0)}%</span></div>
-        <div><span class="note">거래당 평균</span><span class="v ${bt.exp < 0 ? "short" : "long"}">${bt.exp >= 0 ? "+" : ""}${bt.exp.toFixed(2)}R</span></div>
-        <div><span class="note">합계</span><span class="v ${bt.total < 0 ? "short" : "long"}">${bt.total >= 0 ? "+" : ""}${bt.total.toFixed(1)}R</span></div>
+        <div><span class="note">승률 / 본전 근처</span><span class="v">${(bt.win * 100).toFixed(0)}% / ${(bt.be * 100).toFixed(0)}%</span></div>
+        <div><span class="note">합계 (1R = 손절 시 손실)</span><span class="v ${bt.total < 0 ? "short" : "long"}">${sp(bt.total)}R</span></div>
+        <div><span class="note">최대 낙폭</span><span class="v">${bt.dd.toFixed(1)}R</span></div>
       </div>
-      <div class="scroll"><table class="mini"><thead><tr><th>신호 종류</th><th>횟수</th><th>평균</th></tr></thead><tbody>${
-        bt.kinds.map(([k, c, e]) => `<tr><td>${k}</td><td class="num">${c}</td><td class="num ${e < 0 ? "bad" : "good"}">${e >= 0 ? "+" : ""}${e.toFixed(2)}R</td></tr>`).join("")
-      }</tbody></table></div>
-      <p class="note">다음 봉 시가 진입, 손절 또는 2R 익절, 최대 48봉 보유. 수수료가 거래당 평균 ${bt.fee.toFixed(2)}R를 차지합니다.</p>`;
+      <div class="scroll"><table class="mini"><thead><tr><th>연도</th>${yrs.map(([y]) => `<th>${y}</th>`).join("")}</tr></thead>
+        <tbody><tr><td>R</td>${yrs.map(([, v]) => `<td class="num ${v < 0 ? "bad" : "good"}">${sp(v)}</td>`).join("")}</tr></tbody></table></div>
+      <span class="label">지금 설정으로 따라 했다면 (시드 ${krw(settings.seed)} · 위험 ${settings.risk}% · ${settings.lev}배)</span>
+      <div class="kv">
+        <div><span class="note">최종 시드</span><span class="v ${bt.seed < settings.seed ? "short" : "long"}">${krw(bt.seed)}</span></div>
+        <div><span class="note">최대 낙폭</span><span class="v">${(bt.mdd * 100).toFixed(0)}%</span></div>
+        <div><span class="note">손절 전 청산</span><span class="v ${bt.liqs ? "short" : ""}">${bt.liqs}회</span></div>
+      </div>
+      <p class="note">승률이 낮아 보여도 손실은 작고(처음 40%만 들어가 있을 때 손절되면 0.4R), 추세를 끝까지 따라간 몇 번의 큰 수익이 합계를 만듭니다. 연속 손절이 10번 넘게 나올 수 있어요.</p>`;
   }
   drawChart(s);
 }
@@ -690,7 +652,8 @@ const charts = {};
 const EV_SHORT = { stop: "손절", t1: "1차 익절", t2: "2차 익절" };
 const FIB_LEVELS = [-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5];
 const TOOL_STEPS = { line: ["선의 시작점을 누르세요", "선의 끝점을 누르세요"], hline: ["수평선을 놓을 가격을 누르세요"],
-                     fib: ["기준선 시작점을 누르세요", "기준선 끝점을 누르세요", "채널 폭을 정할 점을 누르세요"] };
+                     fib: ["기준선 시작점을 누르세요", "기준선 끝점을 누르세요", "채널 폭을 정할 점을 누르세요"],
+                     measure: ["측정 시작점을 누르세요", "측정 끝점을 누르세요"] };
 let drawings = {};
 try { drawings = JSON.parse(localStorage.getItem("btc-dash-drawings") || "{}"); } catch (e) {}
 // 예전(카드별) 저장분은 그 카드의 신호 봉으로 옮김
@@ -836,9 +799,14 @@ function makeChart(s) {
     hist: chart.addSeries(L.HistogramSeries, { priceLineVisible: false, lastValueVisible: false, priceFormat: one }, 2),
     macd: chart.addSeries(L.LineSeries, { ...lo, color: accent, lastValueVisible: true, title: "MACD", priceFormat: one }, 2),
     sig: chart.addSeries(L.LineSeries, { ...lo, color: tokenColor("--ema20"), priceFormat: one }, 2),
+    e200: chart.addSeries(L.LineSeries, { ...lo, lineWidth: 2, color: tokenColor("--ema200") }),
+    dcU: chart.addSeries(L.LineSeries, { ...lo, color: tokenColor("--dc"), lineStyle: L.LineStyle.Dashed }),
+    dcL: chart.addSeries(L.LineSeries, { ...lo, color: tokenColor("--dc"), lineStyle: L.LineStyle.Dashed }),
+    vol: chart.addSeries(L.HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false }),
     markers: null, times: [], index: new Map(), firstTs: null, lastTs: null,
     lines: [], focusKey: "", tool: null, pts: [], hover: null, selected: null, layer: null,
   };
+  c.vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });  // 거래량은 가격 창 아래쪽 18%
   c.markers = L.createSeriesMarkers(candles, []);
   c.layer = makeLayer(s, c);
   candles.attachPrimitive(c.layer);
@@ -863,7 +831,20 @@ function makeChart(s) {
   card.querySelector("[data-reset]").addEventListener("click", () => resetView(c));
   card.querySelectorAll("[data-tool]").forEach(btn => btn.addEventListener("click", () => onToolButton(s, btn)));
   card.querySelectorAll("[data-tf]").forEach(btn => btn.addEventListener("click", () => chooseTf(s, btn.dataset.tf)));
+  card.querySelectorAll("[data-ind]").forEach(btn => btn.addEventListener("click", () => {
+    indOn[btn.dataset.ind] = !indOn[btn.dataset.ind];
+    try { localStorage.setItem("btc-dash-ind", JSON.stringify(indOn)); } catch (e) {}
+    applyInd(s);
+  }));
+  card.querySelector('[data-view="log"]').addEventListener("click", () => {
+    indOn.log = !indOn.log;
+    try { localStorage.setItem("btc-dash-ind", JSON.stringify(indOn)); } catch (e) {}
+    applyInd(s);
+  });
+  card.querySelector('[data-view="fs"]').addEventListener("click", () => toggleFull(s));
   bindDrawing(s, c, box);
+  charts[s.key] = c;
+  applyInd(s);
   return c;
 }
 
@@ -888,7 +869,7 @@ async function ensureTf(tf) {
   loadingTf[tf] = true;
   try {
     merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 1000 }));
-    if (tf === "3D") await backfill("3D", BARS["3D"]);
+    if (BARS[tf] > 1000) await backfill(tf, BARS[tf]);
     state.inds[tf] = indicators(series(tf));
     STYLES.forEach(drawChart);
   } catch (e) { setStatus("err", `${tf} 차트 데이터를 못 받았습니다: ${e.message}`); }
@@ -900,13 +881,33 @@ function chooseTf(s, tf) {
   if (charts[s.key]) { if (charts[s.key].tool) setTool(s, null); select(s, null); }
   drawChart(s);
 }
+function applyInd(s) {
+  const c = charts[s.key], L = window.LightweightCharts;
+  if (!c) return;
+  c.e200.applyOptions({ visible: indOn.e200 });
+  for (const ser of [c.dcU, c.dcL]) ser.applyOptions({ visible: indOn.dc });
+  for (const ser of [c.e20, c.e50]) ser.applyOptions({ visible: indOn.ema });
+  for (const ser of [c.bbU, c.bbM, c.bbL]) ser.applyOptions({ visible: indOn.bb });
+  c.vol.applyOptions({ visible: indOn.vol });
+  c.candles.priceScale().applyOptions({ mode: indOn.log ? L.PriceScaleMode.Logarithmic : L.PriceScaleMode.Normal });
+  const card = $("card-" + s.key);
+  card.querySelectorAll("[data-ind]").forEach(b => b.classList.toggle("on", !!indOn[b.dataset.ind]));
+  card.querySelector('[data-view="log"]').classList.toggle("on", indOn.log);
+}
+function toggleFull(s) {
+  const card = $("card-" + s.key), on = !card.classList.contains("fs");
+  card.classList.toggle("fs", on);
+  document.body.classList.toggle("fs-open", on);
+  card.querySelector('[data-view="fs"]').textContent = on ? "전체 화면 닫기" : "전체 화면";
+}
+
 function drawChart(s) {
   const c = charts[s.key] || (charts[s.key] = makeChart(s));
   if (!c) return;
   const tf = viewTf[s.key] || s.tf, r = state.results[s.key];
   $("card-" + s.key).querySelectorAll("[data-tf]").forEach(b => b.classList.toggle("active", b.dataset.tf === tf));
   if (c.tf !== tf) {
-    // 봉을 바꾸면 차트를 새로 채운다 (그린 선은 봉마다 따로 저장)
+    // 봉을 바꾸면 차트를 새로 채운다
     c.tf = tf; c.firstTs = null; c.lastTs = null; c.times = []; c.index = new Map();
   }
   const ind = state.inds[tf];
@@ -914,25 +915,30 @@ function drawChart(s) {
   const n = ind.c.length;
   if (n < 30) return;
   const t = k => toTime(ind.ts[k]);
-  const histColor = k => ind.hist[k] >= 0 ? (ind.hist[k] >= (ind.hist[k - 1] ?? 0) ? tokenColor("--long") : tokenColor("--long-dim"))
-                                           : (ind.hist[k] <= (ind.hist[k - 1] ?? 0) ? tokenColor("--short") : tokenColor("--short-dim"));
+  const long = tokenColor("--long"), short = tokenColor("--short");
+  const volUp = withAlpha(long, 0.35), volDn = withAlpha(short, 0.35);
+  const histColor = k => ind.hist[k] >= 0 ? (ind.hist[k] >= (ind.hist[k - 1] ?? 0) ? long : tokenColor("--long-dim"))
+                                           : (ind.hist[k] <= (ind.hist[k - 1] ?? 0) ? short : tokenColor("--short-dim"));
+  // 돈치안 20 = 직전 20봉 최고가·최저가 (이 선을 종가가 넘으면 돌파)
+  const dcU = k => k >= BREAK_N ? maxR(ind.h, k - BREAK_N, k) : ind.h[k];
+  const dcL = k => k >= BREAK_N ? minR(ind.l, k - BREAK_N, k) : ind.l[k];
   const rows = k => [
     [c.candles, { time: t(k), open: ind.o[k], high: ind.h[k], low: ind.l[k], close: ind.c[k] }],
-    [c.e20, { time: t(k), value: ind.e20[k] }], [c.e50, { time: t(k), value: ind.e50[k] }],
+    [c.e20, { time: t(k), value: ind.e20[k] }], [c.e50, { time: t(k), value: ind.e50[k] }], [c.e200, { time: t(k), value: ind.e200[k] }],
+    [c.dcU, { time: t(k), value: dcU(k) }], [c.dcL, { time: t(k), value: dcL(k) }],
     [c.bbU, { time: t(k), value: ind.bu[k] }], [c.bbM, { time: t(k), value: (ind.bu[k] + ind.bl[k]) / 2 }], [c.bbL, { time: t(k), value: ind.bl[k] }],
+    [c.vol, { time: t(k), value: ind.v[k], color: ind.c[k] >= ind.o[k] ? volUp : volDn }],
     [c.rsi, { time: t(k), value: ind.rsi[k] }],
     [c.hist, { time: t(k), value: ind.hist[k], color: histColor(k) }],
     [c.macd, { time: t(k), value: ind.macd[k] }], [c.sig, { time: t(k), value: ind.sig[k] }],
   ];
-  let grew = false;
-  let keepRange = null;
-  if (c.firstTs !== null && ind.ts[Math.max(26, n - 3000)] < c.firstTs) {
-    keepRange = c.chart.timeScale().getVisibleRange();
+  let grew = false, keepRange = null;
+  if (c.firstTs !== null && ind.ts[Math.max(26, n - 20000)] < c.firstTs) {
+    keepRange = c.chart.timeScale().getVisibleRange();  // 과거 데이터가 더 들어오면 보던 구간을 유지한 채 다시 채움
     c.firstTs = null; c.times = []; c.index = new Map();
   }
   if (c.firstTs === null) {
-    // 처음 한 번만 전체를 넣고 최근 100봉이 보이게. 이후에는 이어 붙이기만 해서 확대·이동 상태를 유지
-    const k0 = Math.max(26, n - 3000);  // MACD가 자리 잡은 뒤부터
+    const k0 = Math.max(26, n - 20000);  // MACD가 자리 잡은 뒤부터
     const ks = Array.from({ length: n - k0 }, (_, j) => k0 + j);
     const cols = ks.map(rows);
     cols[0].forEach((_, si) => cols[0][si][0].setData(cols.map(row => row[si][1])));
@@ -951,29 +957,33 @@ function drawChart(s) {
   c.lastTs = Math.max(c.lastTs || 0, ind.ts[n - 1]);
   if (grew) renderDrawings(s);
 
-  // 신호 화살표와, 초점 신호의 손절·익절 도달 표시
-  const f = r.focus, long = tokenColor("--long"), short = tokenColor("--short");
-  const own = tf === s.tf;
-  const marks = !own ? [] : r.marks.map(([k, d]) => ({
-    time: t(k), position: d === 1 ? "belowBar" : "aboveBar",
-    color: d === 1 ? long : short, shape: d === 1 ? "arrowUp" : "arrowDown", text: d === 1 ? "롱" : "숏",
-  }));
-  if (f && own) for (const [m, ev] of f.ev) {
-    marks.push({ time: t(m), position: f.d === 1 ? (ev === "stop" ? "belowBar" : "aboveBar") : (ev === "stop" ? "aboveBar" : "belowBar"),
-                 color: ev === "stop" ? short : long, shape: "circle", text: EV_SHORT[ev] });
+  // 규칙대로 했을 때의 진입·추가·청산 표시 (신호 기준 봉에서만)
+  const marks = [];
+  if (tf === s.tf) for (const tr of state.trades.slice(-80)) {
+    for (const [kind, m] of tr.events) {
+      if (!c.index.has(ind.ts[m])) continue;
+      if (kind === "entry") marks.push({ time: t(m), position: tr.d === 1 ? "belowBar" : "aboveBar", color: tr.d === 1 ? long : short,
+                                         shape: tr.d === 1 ? "arrowUp" : "arrowDown", text: DIR[tr.d] });
+      else if (kind === "add") marks.push({ time: t(m), position: tr.d === 1 ? "belowBar" : "aboveBar", color: tokenColor("--accent"), shape: "circle", text: "추가" });
+      else if (kind === "exit") marks.push({ time: t(m), position: tr.d === 1 ? "aboveBar" : "belowBar", color: tr.r > 0 ? long : short,
+                                             shape: "square", text: `${sp(tr.r, 1)}R` });
+      else if (kind === "signal" && tr.state === "pending") marks.push({ time: t(m), position: tr.d === 1 ? "belowBar" : "aboveBar",
+                                             color: tr.d === 1 ? long : short, shape: tr.d === 1 ? "arrowUp" : "arrowDown", text: `${DIR[tr.d]} 신호` });
+    }
   }
   c.markers.setMarkers(marks.sort((a, b) => a.time - b.time));
 
-  // 진입·손절·익절 가격선 (초점 신호가 바뀔 때만 다시 그림)
-  const key = f ? `${ind.ts[f.k]}|${f.d}` : "";
+  // 지금 거래의 진입·손절·추가 진입·청산가 (점선, 바뀔 때만 다시 그림)
+  const cur = state.cur;
+  const key = cur ? `${cur.ts}|${cur.stop}|${cur.added}|${settings.lev}` : "";
   if (key !== c.focusKey) {
     c.lines.forEach(l => c.candles.removePriceLine(l)); c.lines = [];
-    if (f) {
+    if (cur) {
       const dash = window.LightweightCharts.LineStyle.Dashed;
-      for (const [price, color, title] of [
-        [f.lv.stop, short, "손절"], [f.lv.entry, tokenColor("--muted"), "진입"],
-        [f.lv.t1, long, "1차 익절"], [f.lv.t2, long, "2차 익절"],
-      ]) c.lines.push(c.candles.createPriceLine({ price, color, title, lineWidth: 1, lineStyle: dash, axisLabelVisible: true }));
+      const liqPx = cur.entry * (1 - cur.d * (1 / settings.lev - MMR));
+      const items = [[cur.stop, short, "손절"], [cur.entry, tokenColor("--muted"), "진입"], [liqPx, tokenColor("--wait"), `청산 ${settings.lev}배`]];
+      if (!cur.added) items.push([cur.addPx, tokenColor("--accent"), "추가 진입"]);
+      for (const [price, color, title] of items) c.lines.push(c.candles.createPriceLine({ price, color, title, lineWidth: 1, lineStyle: dash, axisLabelVisible: true }));
     }
     c.focusKey = key;
   }
@@ -985,7 +995,7 @@ function drawChart(s) {
 // 차트 위에 직접 그린다. 선을 눌러 선택하면 점을 끌어 수정하거나 선을 끌어 통째로 옮길 수 있고, 잠그면 움직이지 않는다.
 // 점은 (시각, 가격)으로 저장해 확대·이동·봉 변경에도 같은 자리에 그려진다.
 const FIB_COLORS = ["#787b86", "#f23645", "#ff9800", "#4caf50", "#089981", "#00bcd4", "#2962ff", "#9c27b0", "#e91e63", "#787b86", "#f23645"];
-const DRAW_NAME = { line: "추세선", hline: "수평선", fib: "피보나치 채널" };
+const DRAW_NAME = { line: "추세선", hline: "수평선", fib: "피보나치 채널", measure: "측정" };
 let drawSeq = 0;
 const newId = () => Date.now().toString(36) + (drawSeq++).toString(36);
 for (const list of Object.values(drawings)) for (const d of list) if (!d.id) d.id = newId();
@@ -1041,6 +1051,15 @@ function geometry(c, d, W, H) {
     g.segs.push({ x1: 0, y1: P[0].y, x2: W, y2: P[0].y, color, width: 1.5 });
     g.labels.push({ x: W - 6, y: P[0].y - 5, text: fmt(d.pts[0].p), color, align: "right" });
     g.handles = [{ x: Math.max(24, Math.min(W - 24, P[0].x)), y: P[0].y, i: 0 }];
+  } else if (d.type === "measure") {
+    // 두 점 사이 가격 차이·변동률·봉 수
+    const Q = P[1] || P[0], A = d.pts[0], B = d.pts[1] || d.pts[0], diff = B.p - A.p;
+    const col = diff >= 0 ? tokenColor("--long") : tokenColor("--short");
+    g.fills.push({ pts: [[P[0].x, P[0].y], [Q.x, P[0].y], [Q.x, Q.y], [P[0].x, Q.y]], color: withAlpha(col, 0.12) });
+    g.segs.push({ x1: P[0].x, y1: P[0].y, x2: Q.x, y2: Q.y, color: col, width: 1.5 });
+    const bars = Math.round(Math.abs(logicalOf(c, B.t) - logicalOf(c, A.t)));
+    g.labels.push({ x: (P[0].x + Q.x) / 2, y: Math.min(P[0].y, Q.y) - 6, color: col, align: "center",
+                    text: `${diff >= 0 ? "+" : ""}${fmt(diff)} (${(diff / A.p * 100).toFixed(2)}%) · ${bars}봉` });
   } else if (d.type === "fib") {
     const [A, B, C] = d.pts;
     if (!B || A.t === B.t) {
@@ -1320,33 +1339,39 @@ function connectLive() {
   open();
 }
 
+// 규칙대로 했을 때의 최근 거래 기록 (진입·추가 진입·청산)
 function renderLog() {
-  const ul = $("log"); ul.textContent = "";
-  $("log-empty").hidden = logItems.length > 0;
-  for (const it of logItems) {
-    const s = STYLES.find(x => x.key === it.style); if (!s) continue;
+  const ul = $("log"), ind = state.inds[MAIN_TF];
+  ul.textContent = "";
+  if (!ind) return;
+  const items = [];
+  for (const t of state.trades.slice(-8)) for (const [kind, m, px] of t.events) {
+    if (kind === "entry" || kind === "add" || kind === "exit") items.push({ at: ind.ts[m], kind, t, px });
+  }
+  if (state.cur && state.cur.state === "pending") items.push({ at: ind.ts[state.cur.sigK] + TF_MS[MAIN_TF], kind: "signal", t: state.cur, px: state.cur.entry });
+  items.reverse();
+  $("log-empty").hidden = items.length > 0;
+  for (const it of items.slice(0, 20)) {
     const li = document.createElement("li");
-    const t = new Date(it.at || it.ts + TF_MS[s.tf]);
     li.innerHTML = `<span class="t num"></span><span></span><span class="num"></span>`;
-    li.children[0].textContent = `${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-    li.children[1].textContent = it.ev ? `${s.name}(${s.tfName}) ${it.d === 1 ? "롱" : "숏"} · ${it.kind}` : `${s.name}(${s.tfName}) · ${it.kind}`;
-    li.children[1].className = it.ev ? (it.ev === "stop" ? "bad" : "good") : (it.d === 1 ? "good" : "bad");
-    li.children[2].textContent = fmt(it.price);
+    li.children[0].textContent = new Date(it.at).toLocaleString("ko-KR", { year: "2-digit", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const dir = DIR[it.t.d];
+    li.children[1].textContent = { signal: `${dir} 신호 · 다음 봉 진입`, entry: `${dir} 진입 (40%)`, add: `${dir} 추가 진입 (60%)`,
+                                   exit: `${dir} 청산 ${sp(it.t.r, 2)}R` }[it.kind];
+    li.children[1].className = it.kind === "exit" ? (it.t.r > 0 ? "good" : "bad") : (it.t.d === 1 ? "good" : "bad");
+    li.children[2].textContent = fmt(it.px);
     ul.appendChild(li);
   }
 }
 
-function renderAll() { renderTop(); renderTrend(); STYLES.forEach(renderCard); renderLog(); }
+function renderAll() { renderTop(); STYLES.forEach(renderCard); renderLog(); }
 
 function tickCountdown() {
-  const now = Date.now();
-  for (const s of STYLES) {
-    const ind = state.inds[s.tf], el = document.querySelector(`#card-${s.key} [data-cd]`);
-    if (!ind || !el) continue;
-    const left = Math.max(0, ind.ts[ind.ts.length - 1] + TF_MS[s.tf] - now);
-    const hh = Math.floor(left / 3.6e6), mm = Math.floor(left % 3.6e6 / 6e4), ss = Math.floor(left % 6e4 / 1000);
-    el.textContent = "봉 마감까지 " + (hh ? `${hh}:${String(mm).padStart(2, "0")}` : mm) + ":" + String(ss).padStart(2, "0");
-  }
+  const ind = state.inds[MAIN_TF], el = document.querySelector(`#card-main [data-cd]`);
+  if (!ind || !el) return;
+  const left = Math.max(0, ind.ts[ind.ts.length - 1] + TF_MS[MAIN_TF] - Date.now());
+  const hh = Math.floor(left / 3.6e6), mm = Math.floor(left % 3.6e6 / 6e4), ss = Math.floor(left % 6e4 / 1000);
+  el.textContent = "4시간봉 마감까지 " + (hh ? `${hh}:${String(mm).padStart(2, "0")}` : mm) + ":" + String(ss).padStart(2, "0");
 }
 
 // ===== 데이터 갱신 =====
@@ -1366,43 +1391,58 @@ async function loadContext() {
     lsa: +lsa[lsa.length - 1].longShortAccountRatio, lsp: +lsp[lsp.length - 1].longShortPositionRatio, tbs: buy / sell,
   };
 }
+async function loadFx() {
+  // 원화 환산용 업비트 USDT 시세
+  try {
+    const r = await fetch("https://api.upbit.com/v1/ticker?markets=KRW-USDT");
+    const d = await r.json();
+    if (d && d[0] && d[0].trade_price) state.fx = d[0].trade_price;
+  } catch (e) {}
+}
 
 let busy = false;
 async function refresh() {
   if (busy) return; busy = true;
   try {
-    await loadContext();
+    await Promise.all([loadContext(), loadFx()]);
     for (const tf of TFS) merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 100 }));
     for (const tf of VIEW_ONLY) if (store[tf].size) merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 100 }));
-    compute(true); renderAll();
-    const allDone = TFS.every(tf => backfilled[tf]);
-    setStatus("ok", `${new Date().toLocaleTimeString("ko-KR")} 갱신${allDone ? "" : " · 백테스트용 과거 데이터 받는 중"}`);
+    compute(); renderAll();
+    setStatus("ok", `${new Date().toLocaleTimeString("ko-KR")} 갱신${state.backfilling ? " · 과거 데이터 받는 중" : ""}`);
   } catch (e) {
     setStatus("err", "갱신 실패: " + e.message + " (20초 뒤 다시 시도)");
   } finally { busy = false; }
 }
 
+function openLink(url) {
+  // 텔레그램 안에서는 텔레그램 방식으로 외부 브라우저를 연다
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg && tg.initData && tg.openLink) { tg.openLink(url); return true; }
+  return false;
+}
+
 async function init() {
   const cards = $("cards"); STYLES.forEach(s => cards.appendChild(cardSkeleton(s)));
-  for (const k of ["acct", "risk", "lev"]) {
-    const inp = $("in-" + k); inp.value = settings[k];
+  const inputs = { seed: "in-seed", fx: "in-fx", risk: "in-risk", lev: "in-lev" };
+  for (const [k, id] of Object.entries(inputs)) {
+    const inp = $(id);
+    inp.value = k === "fx" && !settings.fx ? "" : settings[k];
     inp.addEventListener("input", () => {
-      const v = parseFloat(inp.value); if (!(v > 0)) return;
-      settings[k] = v;
-      try { localStorage.setItem("btc-dash-settings", JSON.stringify(settings)); } catch (e) {}
+      const v = parseFloat(inp.value);
+      if (k === "fx") settings.fx = v > 0 ? v : 0;  // 비우면 업비트 시세
+      else if (v > 0) settings[k] = v; else return;
+      try { localStorage.setItem("btc-dash-order", JSON.stringify(settings)); } catch (e) {}
       STYLES.forEach(renderCard);
     });
   }
   $("btn-refresh").addEventListener("click", refresh);
+  $("btn-news").addEventListener("click", e => { if (openLink($("btn-news").href)) e.preventDefault(); });
   try {
-    // 1단계: 신호 계산에 필요한 만큼만 빨리 받기
-    await loadContext(); renderTop();
-    for (const tf of TFS) {
-      merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 1000 }));
-      if (tf === "1D") await backfill("1D", 400);
-    }
-    compute(false); renderAll();
-    setStatus("ok", "신호 준비됨 · 백테스트용 과거 데이터 받는 중");
+    // 1단계: 신호 계산에 필요한 만큼 빨리 받기
+    await Promise.all([loadContext(), loadFx()]); renderTop();
+    merge(MAIN_TF, await get("candles", { symbol: SYM, productType: PT, granularity: MAIN_TF, limit: 1000 }));
+    compute(); renderAll();
+    setStatus("ok", "신호 준비됨 · 과거 데이터 받는 중");
   } catch (e) {
     setStatus("err", "불러오기 실패: " + e.message);
   }
@@ -1410,15 +1450,12 @@ async function init() {
   cloudPull(); setInterval(cloudPull, 30000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) cloudPull(); });
   setInterval(tickCountdown, 1000);
-  // 2단계: 백테스트용 과거 데이터
-  const failed = [];
-  for (const tf of [...TFS].reverse()) {  // 일봉부터 (2019년부터 차트를 빨리 볼 수 있게)
-    try { await backfill(tf, BARS[tf]); backfilled[tf] = true; }
-    catch (e) { failed.push(tf); }
-    compute(true); renderAll();
-  }
-  if (failed.length) setStatus("err", `${failed.join(", ")} 과거 데이터를 못 받아 해당 백테스트가 비어 있습니다. 새로고침하면 다시 받습니다.`);
-  else setStatus("ok", `${new Date().toLocaleTimeString("ko-KR")} 갱신 · 백테스트 완료`);
+  // 2단계: 2019년부터 4시간봉 (백테스트·긴 차트)
+  try { await backfill(MAIN_TF, BARS[MAIN_TF]); }
+  catch (e) { setStatus("err", "과거 데이터를 다 받지 못했습니다. 새로고침하면 다시 받습니다."); }
+  state.backfilling = false;
+  compute(); renderAll();
+  setStatus("ok", `${new Date().toLocaleTimeString("ko-KR")} 갱신 · 백테스트 완료`);
 }
 try {
   const tg = window.Telegram && window.Telegram.WebApp;
@@ -1428,7 +1465,7 @@ try {
   }
 } catch (e) {}
 // 점검용으로 내부 상태만 노출
-window.__dash = { state, store, STYLES, charts, select, hitTest, geometry, dkey, get drawings() { return drawings; }, levels, tradePath, compute, renderAll, renderLog, onTick, get logItems() { return logItems; } };
+window.__dash = { state, store, STYLES, charts, select, hitTest, geometry, dkey, get drawings() { return drawings; }, replay, btSummary, orderPlan, compute, renderAll, onTick, settings };
 init();
 connectLive();
 })();

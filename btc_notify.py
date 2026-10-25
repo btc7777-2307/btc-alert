@@ -1,6 +1,7 @@
-"""btc_signals.py 규칙으로 새 신호를 찾아 텔레그램으로 보낸다.
+"""4시간봉 돈치안 돌파 전략(strategy.py)의 신호·추가 진입·손절 갱신·청산을 텔레그램으로 보낸다.
 
-GitHub Actions가 5분마다 실행한다. 환경변수:
+GitHub Actions가 몇 분~30분마다 실행한다. 매번 4시간봉으로 규칙을 처음부터 재현해 지금 포지션 상태를 구하고,
+아직 보내지 않은 일만 보낸다. 환경변수:
   TELEGRAM_TOKEN    봇 토큰 (없으면 메시지를 보내지 않고 화면에만 출력)
   TELEGRAM_CHAT_ID  받을 채팅 id (없으면 봇에게 최근 24시간 안에 말을 건 채팅을 찾아 사용)
 보낸 신호와 하루 한 번 상태 알림 기록은 state.json에 남겨 같은 알림을 두 번 보내지 않는다.
@@ -13,12 +14,14 @@ import urllib.parse
 import urllib.request
 
 import btc_signals as bs
+import strategy as stg
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 KST = 9 * 3600
-CANDLES = {"5m": 1000, "15m": 1000, "1H": 1000, "4H": 1000, "1D": 400}
-# 실행이 늦어져도 놓치지 않도록, 이 시간 안에 마감된 봉까지 거슬러 확인 (봉 길이의 2배와 60분 중 큰 값)
-LOOKBACK_MS = {tf: max(2 * ms, 3.6e6) for tf, ms in bs.TF_MS.items()}
+TF = "4H"
+BAR_MS = bs.TF_MS[TF]
+# 이보다 오래된 일은 처음 실행할 때 보내지 않고 기록만 (실행이 늦어져도 놓치지 않을 만큼 넉넉히)
+LOOKBACK_MS = 3 * BAR_MS
 HEARTBEAT_HOUR_KST = 9
 NAMES = {1: "상승", -1: "하락", 0: "횡보"}
 
@@ -102,132 +105,111 @@ def kst(ts_ms, fmt="%m/%d %H:%M"):
     return time.strftime(fmt, time.gmtime(ts_ms / 1000 + KST))
 
 
-def signal_reason(kind, d, ind, k, htf, ht):
-    """신호가 나온 이유를 한 줄로."""
-    rsi = ind["rsi"][k]
-    vol = ind["v"][k] / ind["vavg"][k] if ind["vavg"][k] else 0
-    if kind.startswith("추세"):
-        main = (f"상승 추세 중 EMA20까지 눌렸다가 다시 오름" if d == 1
-                else f"하락 추세 중 EMA20까지 반등했다가 다시 꺾임")
-    elif "돌파" in kind:
-        main = f"20봉 고점 {max(ind['h'][k - 20:k]):,.0f}을 거래량 {vol:.1f}배로 뚫음"
-    elif "이탈" in kind:
-        main = f"20봉 저점 {min(ind['l'][k - 20:k]):,.0f}을 거래량 {vol:.1f}배로 깨짐"
-    elif d == 1:
-        main = "횡보 중 볼린저 하단 밖으로 빠졌다가 안으로 복귀 (과매도 반등)"
-    else:
-        main = "횡보 중 볼린저 상단 밖으로 나갔다가 안으로 복귀 (과매수 반락)"
-    return f"{main} · 상위 {TF_KO[htf]} {NAMES[ht]}, RSI {rsi:.0f}"
+DIR = {1: "롱", -1: "숏"}
 
 
-def signal_message(style, tf, htf, ht, kind, d, ind, k, now_ms):
-    e, s, t1, t2 = bs.levels(ind, k, d)
-    stop_pct = abs(e - s) / e
-    close_ms = ind["ts"][k] + bs.TF_MS[tf]
-    delay_min = max(0, (now_ms - close_ms) / 60000)
-    lev_lines = []
-    for lev in (10, 20, 50):
-        ok = stop_pct < bs.liq_distance(lev) * 0.8
-        lev_lines.append(f"{lev}배 {'안전' if ok else '손절 전 청산 위험'}")
-    return "\n".join([
-        f"{'🟢' if d == 1 else '🔴'} {style}({TF_KO[tf]}) {'롱' if d == 1 else '숏'} 신호 · {kind}",
-        f"이유: {signal_reason(kind, d, ind, k, htf, ht)}",
-        f"진입 {e:,.1f}",
-        f"손절 {s:,.1f} ({stop_pct * 100:.2f}%)",
-        f"1차 익절 {t1:,.1f} · 2차 익절 {t2:,.1f}",
-        " · ".join(lev_lines),
-        f"봉 마감 {kst(close_ms)} · {delay_min:.0f}분 지연",
-        "※ 참고용. 백테스트에서 손실이었던 규칙입니다.",
-    ])
+def fmt(x):
+    return f"{x:,.1f}"
 
 
-EV_NAME = {"t1": "1차 익절 도달", "t2": "2차 익절 도달", "stop": "손절 도달"}
+def usdt_krw():
+    """업비트 USDT 원화 시세 (실패하면 1,400원)."""
+    try:
+        with urllib.request.urlopen("https://api.upbit.com/v1/ticker?markets=KRW-USDT", timeout=10) as r:
+            return float(json.load(r)[0]["trade_price"])
+    except Exception:
+        return 1400.0
 
 
-def trade_path(ind, k, d, lv, end):
-    """신호 k 이후 손절·1차 익절·2차 익절에 처음 닿은 봉. 같은 봉이면 손절 먼저(보수적)."""
-    entry, stop, t1, t2 = lv
-    ev, t1_hit = [], False
-    for m in range(k + 1, end + 1):
-        hit_stop = ind["l"][m] <= stop if d == 1 else ind["h"][m] >= stop
-        hit_t1 = ind["h"][m] >= t1 if d == 1 else ind["l"][m] <= t1
-        hit_t2 = ind["h"][m] >= t2 if d == 1 else ind["l"][m] <= t2
-        if hit_stop:
-            ev.append((m, "stop"))
-            break
-        if not t1_hit and hit_t1:
-            t1_hit = True
-            ev.append((m, "t1"))
-        if hit_t2:
-            ev.append((m, "t2"))
-            break
-    return ev
-
-
-TF_KO = {"5m": "5분봉", "15m": "15분봉", "1H": "1시간봉", "4H": "4시간봉", "1D": "일봉"}
-
-
-def htf_trend_at(hind, hmap, k):
-    j = hmap[k]
-    return bs.trend(hind, j) if j is not None and j >= 200 else 0
-
-
-def stop_reasons(ind, hind, hmap, htf, k, m, d, lv):
-    """손절된 이유를 차트 상태로 추정해 최대 3줄. 원인을 확정하는 것은 아니다."""
-    entry, stop = lv[0], lv[1]
-    out = []
-    t0, t1 = htf_trend_at(hind, hmap, k), htf_trend_at(hind, hmap, m)
-    if t1 != t0:
-        out.append(f"상위 {TF_KO[htf]} 추세가 {NAMES[t0]}에서 {NAMES[t1]}(으)로 바뀜")
-    c = ind["c"][m]
-    if (c - ind["e50"][m]) * d < 0:
-        out.append(f"가격이 EMA50을 {'넘어 올라가' if d == -1 else '깨고 내려가'} 추세가 꺾임")
-    elif (c - ind["e20"][m]) * d < 0:
-        out.append(f"가격이 EMA20 {'위로 올라와 반등' if d == -1 else '아래로 내려와 하락'} 힘이 셌음")
-    stop_pct = abs(entry - stop) / entry
-    if stop_pct < 0.002:
-        out.append(f"손절폭이 {stop_pct * 100:.2f}%로 좁아 작은 흔들림에도 걸림")
-    if m - k <= 2:
-        out.append(f"신호 후 {m - k}봉 만에 되돌아옴 (가짜 {'이탈' if d == -1 else '돌파'} 가능성)")
-    if any((ind["c"][n] - ind["o"][n]) * d < 0 and ind["v"][n] > 1.5 * ind["vavg"][n] for n in range(k + 1, m + 1)):
-        out.append(f"거래량이 실린 {'양봉' if d == -1 else '음봉'}이 나와 반대로 밀림")
-    return out[:4] or ["뚜렷한 신호 없이 반대 방향으로 움직임"]
-
-
-def event_message(style, tf, d, ev, lv, sig_ms, ev_ms, bars, reasons=()):
-    entry, stop, t1, t2 = lv
-    price = {"stop": stop, "t1": t1, "t2": t2}[ev]
-    move = (price - entry) / entry * 100 * d
+def order_guide(price, stop_pct):
+    """손절 시 시드의 RISK_PCT%만 잃도록 계획 물량을 잡고, 1차(40%)·추가(60%) 증거금을 안내."""
+    seed = float(os.environ.get("SEED_KRW") or 200000)
+    risk = float(os.environ.get("RISK_PCT") or 2) / 100
+    lev = float(os.environ.get("LEVERAGE") or 30)
+    fx = usdt_krw()
+    loss = seed * risk
+    notional = loss / stop_pct            # 계획 물량 전체(원)
+    first, add = notional * stg.FIRST, notional * (1 - stg.FIRST)
+    btc = lambda krw: max(0.0001, round(krw / fx / price, 4))
+    liq = 1 / lev - 0.004
     lines = [
-        f"{'❌' if ev == 'stop' else '💰'} {style}({TF_KO[tf]}) {'롱' if d == 1 else '숏'} · {EV_NAME[ev]}",
-        f"{price:,.1f} 도달 ({move:+.2f}%)",
-        f"진입 {entry:,.1f} · 손절 {stop:,.1f}",
-        f"1차 익절 {t1:,.1f} · 2차 익절 {t2:,.1f}",
-        f"신호 {kst(sig_ms)} · 도달 {kst(ev_ms)} ({bars}봉 뒤)",
+        f"주문 안내 · 시드 {seed:,.0f}원, 손절 시 {risk * 100:g}%({loss:,.0f}원)만 잃는 크기, {lev:g}배",
+        f"1차: 증거금 {first / lev:,.0f}원 (시드의 {first / lev / seed * 100:.1f}%) · 수량 {btc(first):.4f} BTC",
+        f"추가(1R 도달): 증거금 {add / lev:,.0f}원 (시드의 {add / lev / seed * 100:.1f}%) · 수량 {btc(add):.4f} BTC",
     ]
-    if reasons:
-        lines.append("안 맞은 이유 (차트로 추정):")
-        lines += [f"· {r}" for r in reasons]
+    if stop_pct >= liq * 0.9:
+        lines.append(f"⚠ {lev:g}배는 손절({stop_pct * 100:.1f}%)보다 청산({liq * 100:.1f}%)이 먼저 올 수 있어요 → 이번엔 {max_safe_leverage(stop_pct)}배 이하로")
+    return lines
+
+
+def max_safe_leverage(stop_pct):
+    """격리 마진에서 손절보다 청산이 먼저 오지 않는 최대 배율 (유지증거금 0.4%, 여유 20%)."""
+    return max(1, int(0.8 / (stop_pct + 0.004)))
+
+
+def signal_message(ind, t):
+    k, d = t["sig_k"], t["d"]
+    c, a = ind["c"][k], ind["atr"][k]
+    lvl = max(ind["h"][k - stg.BREAK_N:k]) if d == 1 else min(ind["l"][k - stg.BREAK_N:k])
+    e = t["entry"]
+    risk = stg.STOP_ATR * a
+    stop, add = e - d * risk, e + d * risk
+    stop_pct = risk / e
+    lines = [
+        f"{'🟢' if d == 1 else '🔴'} 4시간봉 돌파 {DIR[d]} 신호",
+        f"이유: 종가 {fmt(c)}가 직전 20봉 {'최고가' if d == 1 else '최저가'} {fmt(lvl)}를 {'넘었고' if d == 1 else '깼고'}, "
+        f"EMA200 {fmt(ind['e200'][k])} {'위' if d == 1 else '아래'}",
+        f"진입: {'다음 봉 시가 근처' if t['state'] == 'pending' else '봉 시가'} {fmt(e)} · 계획 물량의 40%",
+        f"손절: {fmt(stop)} ({stop_pct * 100:.2f}%, ATR x2)",
+        f"추가 진입: {fmt(add)} 도달 시 나머지 60%, 손절은 본전으로",
+        "이후 손절은 진입 후 최고가에서 ATR x3 뒤로 따라 올라감" if d == 1 else "이후 손절은 진입 후 최저가에서 ATR x3 위로 따라 내려감",
+        f"배율: 손절 {stop_pct * 100:.1f}%면 격리 기준 {max_safe_leverage(stop_pct)}배 이하여야 손절 전에 청산되지 않음",
+        "",
+        *order_guide(e, stop_pct),
+        "※ 참고용. 주문은 직접 판단해서 하세요.",
+    ]
     return "\n".join(lines)
 
 
-def build_event(style, ev_key_ts, ev, inds):
-    """보낸 기록의 (스타일, 신호 시각, 종류)로 알림 메시지를 다시 만든다. 데이터 범위 밖이면 None."""
-    tf, htf = bs.STYLES[style]
-    ind, hind = inds[tf], inds[htf]
-    if ev_key_ts not in ind["ts"]:
-        return None
-    k = ind["ts"].index(ev_key_ts)
-    hmap = bs.map_htf(ind["ts"], hind["ts"], bs.TF_MS[tf], bs.TF_MS[htf])
-    d, _, _ = bs.signal_at(ind, k, htf_trend_at(hind, hmap, k))
-    if not d:
-        return None
-    lv = bs.levels(ind, k, d)
-    for m, e in trade_path(ind, k, d, lv, len(ind["c"]) - 1):
-        if e == ev:
-            reasons = stop_reasons(ind, hind, hmap, htf, k, m, d, lv) if ev == "stop" else ()
-            return event_message(style, tf, d, ev, lv, ind["ts"][k] + bs.TF_MS[tf], ind["ts"][m], m - k, reasons)
-    return None
+def event_message(ind, t, kind, m, px):
+    d, e, risk = t["d"], t["entry"], t["risk"]
+    if kind == "add":
+        g = order_guide(e, risk / e)
+        return "\n".join([
+            f"💰 4시간봉 돌파 {DIR[d]} · 1R 도달 {fmt(px)}",
+            "추가 진입: 계획 물량의 나머지 60%",
+            g[2],
+            f"손절을 본전 {fmt(e)}로 올림" if d == 1 else f"손절을 본전 {fmt(e)}로 내림",
+        ])
+    if kind == "trail":
+        locked = (px - e) * d / risk
+        return "\n".join([
+            f"↕ 4시간봉 돌파 {DIR[d]} · 손절가 갱신 {fmt(px)}",
+            f"진입 {fmt(e)} · 이 손절에 걸려도 {locked:+.1f}R (처음 손절폭 기준)",
+        ])
+    if kind == "exit":
+        legs = t.get("legs") or [(e, stg.FIRST)]
+        r = sum(w * ((px - p) * d / risk - (stg.FEE_IN + stg.FEE_OUT) * p / risk) for p, w in legs)
+        pct = sum(w * (px - p) * d / p for p, w in legs) / sum(w for _, w in legs) * 100
+        return "\n".join([
+            f"{'✅' if r > 0 else '❌'} 4시간봉 돌파 {DIR[d]} 청산 · {fmt(px)}",
+            f"결과: {r:+.2f}R (계획 물량 기준, 수수료 포함) · 가격 {pct:+.2f}%",
+            f"진입 {fmt(e)} · {'추가 진입 포함' if len(legs) > 1 else '처음 40%만'} · {m - t['entry_k'] + 1}봉 보유",
+        ])
+    return ""
+
+
+def status_line(ind, trades):
+    t = trades[-1] if trades else None
+    if not t or t["state"] == "closed":
+        k = len(ind["c"]) - 2
+        hi, lo = max(ind["h"][k - stg.BREAK_N + 1:k + 1]), min(ind["l"][k - stg.BREAK_N + 1:k + 1])
+        return f"포지션 없음 · 롱 조건 종가 > {fmt(hi)} (EMA200 {fmt(ind['e200'][k])} 위) / 숏 조건 종가 < {fmt(lo)}"
+    if t["state"] == "pending":
+        return f"{DIR[t['d']]} 신호 · 다음 봉 시가 진입 대기"
+    now = ind["c"][-1]
+    return (f"{DIR[t['d']]} 진행 중 · 진입 {fmt(t['entry'])} · 손절 {fmt(t['stop'])} · "
+            f"{'추가 진입 완료' if t['added'] else '추가 진입가 ' + fmt(t['add_px'])} · 지금 {(now - t['entry']) * t['d'] / t['risk']:+.1f}R")
 
 
 def main():
@@ -236,80 +218,66 @@ def main():
         print("TELEGRAM_TOKEN이 아직 등록되지 않아 건너뜁니다.")
         return
     st = load_state()
+    st.setdefault("trail_sent", {})
     now_ms = time.time() * 1000
-    cache = {tf: bs.candles(tf, n) for tf, n in CANDLES.items()}
-    inds = {tf: bs.indicators(cs) for tf, cs in cache.items()}
-    for tf, cs in cache.items():
-        inds[tf]["ts"] = [r[0] for r in cs]
+    cs = bs.candles(TF, 1200)
+    ind = bs.indicators(cs)
+    ind["ts"] = [r[0] for r in cs]
+    trades = stg.replay(ind, live=True)
 
     if os.environ.get("TEST_MESSAGE") == "true":
         st.pop("menu", None)  # 수동 실행 때는 신호판 버튼도 다시 설정
     ensure_menu_button(st)
 
     if os.environ.get("TEST_MESSAGE") == "true":
-        # 가장 최근에 보낸 손절(없으면 익절) 알림을 지금 형식으로 다시 보내 본다
-        sample = None
-        events = [key.split("|") for key in st["sent"] if key.count("|") == 2]
-        for style, ts, ev in sorted(events, key=lambda e: (e[2] == "stop", int(e[1])), reverse=True):
-            sample = build_event(style, int(ts), ev, inds)
-            if sample:
-                break
+        # 가장 최근 거래의 신호를 지금 형식으로 다시 보내 본다
+        t = next((x for x in reversed(trades) if x.get("events")), None)
         send(st, f"🔔 테스트 알림 · {kst(now_ms)}\n" + (
-            "아래는 최근 알림을 지금 형식으로 다시 보낸 예시입니다.\n\n" + sample if sample
-            else "이 메시지가 보이면 알림 설정이 끝난 것입니다."))
+            "아래는 최근 신호를 지금 형식으로 다시 보낸 예시입니다.\n\n" + signal_message(ind, t) + "\n\n지금 상태: " + status_line(ind, trades)
+            if t else "이 메시지가 보이면 알림 설정이 끝난 것입니다."))
 
     sent_any = False
-    for style, (tf, htf) in bs.STYLES.items():
-        ind, hind = inds[tf], inds[htf]
-        hmap = bs.map_htf(ind["ts"], hind["ts"], bs.TF_MS[tf], bs.TF_MS[htf])
-        last = len(ind["c"]) - 2  # 마지막으로 마감된 봉
-        for k in range(max(211, last - 30), last + 1):
-            close_ms = ind["ts"][k] + bs.TF_MS[tf]
-            if now_ms - close_ms > LOOKBACK_MS[tf]:
+    for t in trades[-3:]:
+        sig_ts = ind["ts"][t["sig_k"]]
+        tkey = str(sig_ts)
+        for kind, m, px in t["events"]:
+            if kind == "entry":
                 continue
-            ht_k = htf_trend_at(hind, hmap, k)
-            d, kind, why = bs.signal_at(ind, k, ht_k)
-            key = f"{style}|{ind['ts'][k]}"
-            if d and key not in st["sent"]:
-                send(st, signal_message(style, tf, htf, ht_k, kind, d, ind, k, now_ms))
-                st["sent"].append(key)
-                sent_any = True
-
-        # 최근 48봉 안의 신호가 손절·익절에 닿았는지 (진행 중인 봉의 고가·저가까지 확인)
-        live = len(ind["c"]) - 1
-        for k in range(max(211, last - 48), last + 1):
-            j = hmap[k]
-            d, _, _ = bs.signal_at(ind, k, bs.trend(hind, j) if j is not None and j >= 200 else 0)
-            if not d:
+            bar_ts = ind["ts"][m]
+            key = f"{kind}|{sig_ts}|{bar_ts}"
+            if key in st["sent"]:
                 continue
-            lv = bs.levels(ind, k, d)
-            for m, ev in trade_path(ind, k, d, lv, live):
-                key = f"{style}|{ind['ts'][k]}|{ev}"
-                if key in st["sent"]:
-                    continue
-                if now_ms - (ind["ts"][m] + bs.TF_MS[tf]) > LOOKBACK_MS[tf]:
-                    st["sent"].append(key)  # 오래전에 닿은 것은 보내지 않고 기록만
-                    continue
-                reasons = stop_reasons(ind, hind, hmap, htf, k, m, d, lv) if ev == "stop" else ()
-                send(st, event_message(style, tf, d, ev, lv, ind["ts"][k] + bs.TF_MS[tf], ind["ts"][m], m - k, reasons))
+            # 봉이 끝나는 시각(진행 중인 봉이면 지금) 기준으로 오래된 일은 기록만
+            when = min(bar_ts + BAR_MS, now_ms)
+            if now_ms - when > LOOKBACK_MS:
                 st["sent"].append(key)
-                sent_any = True
+                if kind == "trail":
+                    st["trail_sent"][tkey] = px
+                continue
+            if kind == "trail":
+                # 손절가는 마감된 봉마다 조금씩 움직이므로, 처음 손절폭의 1/4 이상 움직였을 때만 알림
+                last = st["trail_sent"].get(tkey, t["entry"] - t["d"] * t["risk"])
+                if abs(px - last) < 0.25 * t["risk"]:
+                    st["sent"].append(key)
+                    continue
+                st["trail_sent"][tkey] = px
+            text = signal_message(ind, t) if kind == "signal" else event_message(ind, t, kind, m, px)
+            send(st, text)
+            st["sent"].append(key)
+            sent_any = True
 
     today = kst(now_ms, "%Y-%m-%d")
-    hour = int(kst(now_ms, "%H"))
-    if st.get("heartbeat") != today and hour >= HEARTBEAT_HOUR_KST:
-        price = cache["5m"][-1][4]
-        lines = [f"✅ 신호 알림 작동 중 · {kst(now_ms)}", f"현재가 {price:,.1f}"]
-        for tf in ["15m", "1H", "4H", "1D"]:
-            lines.append(f"{tf} {NAMES[bs.trend(inds[tf], len(inds[tf]['c']) - 2)]}")
+    if st.get("heartbeat") != today and int(kst(now_ms, "%H")) >= HEARTBEAT_HOUR_KST:
+        lines = [f"✅ 신호 알림 작동 중 · {kst(now_ms)}", f"현재가 {fmt(cs[-1][4])}", status_line(ind, trades)]
         if os.environ.get("DASHBOARD_URL"):
             lines.append(f"신호판: {os.environ['DASHBOARD_URL']}")
         send(st, "\n".join(lines))
         st["heartbeat"] = today
         sent_any = True
 
+    st["trail_sent"] = dict(list(st["trail_sent"].items())[-20:])
     save_state(st)
-    print(f"{kst(now_ms)} 확인 완료 · 새 알림 {'있음' if sent_any else '없음'}")
+    print(f"{kst(now_ms)} 확인 완료 · 새 알림 {'있음' if sent_any else '없음'} · {status_line(ind, trades)}")
 
 
 if __name__ == "__main__":

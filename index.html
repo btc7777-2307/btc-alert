@@ -78,7 +78,7 @@ tr:last-child td { border-bottom: 0; }
 .chip.flat { color: var(--wait); background: var(--wait-bg); }
 
 /* 신호 카드 */
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; align-items: start; }
+.cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }  /* 스캘핑 → 데이트레이딩 → 스윙 순서로 한 줄에 하나씩 */
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: grid; min-width: 0; }
 .card-head { padding: 12px 14px 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .card-head h3 { font-size: 16px; font-weight: 700; }
@@ -94,7 +94,7 @@ tr:last-child td { border-bottom: 0; }
 .state.wait { background: var(--wait-bg); }
 .state.wait .big { color: var(--wait); }
 .wrap { grid-template-columns: minmax(0, 1fr); }  /* 차트 캔버스 폭 때문에 페이지가 넓어지지 않게 */
-.chart { width: 100%; min-width: 0; overflow: hidden; height: 320px; margin-top: 4px; touch-action: pan-y; }
+.chart { width: 100%; min-width: 0; overflow: hidden; height: clamp(320px, 45vw, 480px); margin-top: 4px; touch-action: pan-y; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 10px 14px 0; font-size: 11px; color: var(--muted); }
 .chart-legend .lg-e20 { color: var(--ema20); } .chart-legend .lg-e50 { color: var(--ema50); }
 .live { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
@@ -546,7 +546,7 @@ function cardSkeleton(s) {
   const el = document.createElement("article");
   el.className = "card"; el.id = "card-" + s.key;
   el.innerHTML = `
-    <div class="card-head"><h3>${s.name}<span>${s.tfName} · 상위 ${s.htf}</span></h3><span class="countdown num" data-cd></span></div>
+    <div class="card-head"><h3>${s.name} (${s.tfName})<span>상위 ${s.htf} 추세 기준</span></h3><span class="countdown num" data-cd></span></div>
     <div class="state wait" data-state><span class="big">계산 중</span><span class="why">데이터를 불러오는 중입니다</span></div>
     <div class="chart-legend num" data-legend><span class="lg-e20">EMA20</span><span class="lg-e50">EMA50</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
     <div class="chart" data-chart></div>
@@ -797,7 +797,7 @@ function renderLog() {
     const t = new Date(it.at || it.ts + TF_MS[s.tf]);
     li.innerHTML = `<span class="t num"></span><span></span><span class="num"></span>`;
     li.children[0].textContent = `${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-    li.children[1].textContent = it.ev ? `${s.name} ${it.d === 1 ? "롱" : "숏"} · ${it.kind}` : `${s.name} · ${it.kind}`;
+    li.children[1].textContent = it.ev ? `${s.name}(${s.tfName}) ${it.d === 1 ? "롱" : "숏"} · ${it.kind}` : `${s.name}(${s.tfName}) · ${it.kind}`;
     li.children[1].className = it.ev ? (it.ev === "stop" ? "bad" : "good") : (it.d === 1 ? "good" : "bad");
     li.children[2].textContent = fmt(it.price);
     ul.appendChild(li);

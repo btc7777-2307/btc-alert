@@ -109,6 +109,12 @@ tr:last-child td { border-bottom: 0; }
 .tool-hint { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3; max-width: calc(100% - 90px); text-align: center;
   font-size: 12px; color: var(--panel); background: var(--accent); padding: 4px 10px; border-radius: 6px; pointer-events: none; }
 .tool-hint:empty { display: none; }
+.draw-bar { position: absolute; top: 8px; left: 8px; z-index: 4; display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+.draw-bar span { padding: 0 4px; color: var(--fg); white-space: nowrap; }
+.draw-bar button { font-size: 12px; padding: 3px 8px; }
+.draw-bar button:disabled { opacity: .4; cursor: default; }
+.draw-bar[hidden] { display: none; }
 .chart-legend.sub { padding-top: 4px; }
 .chart-legend .lg-bb { color: var(--bb); }
 .chart-legend .ohlc { flex: 1 1 100%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -572,13 +578,15 @@ function cardSkeleton(s) {
     <div class="tf-tabs" role="group" aria-label="차트 봉 선택">${CHART_TFS.map(([tf, label]) =>
       `<button type="button" data-tf="${tf}"${tf === s.tf ? ' class="sig" title="신호 기준 봉"' : ""}>${label}</button>`).join("")}</div>
     <div class="chart-tools">
-      <button type="button" data-tool="line">선긋기</button>
+      <button type="button" data-tool="line">추세선</button>
+      <button type="button" data-tool="hline">수평선</button>
       <button type="button" data-tool="fib">피보나치 채널</button>
       <button type="button" data-tool="undo">되돌리기</button>
       <button type="button" data-tool="clear">모두 지우기</button>
     </div>
     <div class="chart-legend num" data-legend><span class="lg-e20">EMA20</span><span class="lg-e50">EMA50</span><span class="lg-bb">볼린저(20,2)</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted ohlc" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
-    <div class="chart-wrap"><div class="chart" data-chart></div><button type="button" class="chart-reset" data-reset>차트 초기화</button><div class="tool-hint" data-hint></div></div>
+    <div class="chart-wrap"><div class="chart" data-chart></div><button type="button" class="chart-reset" data-reset>차트 초기화</button><div class="tool-hint" data-hint></div>
+      <div class="draw-bar" data-drawbar hidden><span data-drawname></span><button type="button" data-act="lock">잠금</button><button type="button" data-act="del">삭제</button><button type="button" data-act="close" aria-label="선택 해제">닫기</button></div></div>
     <div class="chart-legend num sub"><span>아래 창: RSI(14) · MACD(12,26,9)</span></div>
     <div class="sec" data-levels></div>
     <div class="sec" data-bt><span class="label">백테스트</span><span class="note">과거 데이터를 불러오는 중…</span></div>`;
@@ -679,7 +687,7 @@ const toTime = ts => Math.floor(ts / 1000) + 9 * 3600;  // 차트 시간축을 �
 const charts = {};
 const EV_SHORT = { stop: "손절", t1: "1차 익절", t2: "2차 익절" };
 const FIB_LEVELS = [-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5];
-const TOOL_STEPS = { line: ["선의 시작점을 누르세요", "선의 끝점을 누르세요"],
+const TOOL_STEPS = { line: ["선의 시작점을 누르세요", "선의 끝점을 누르세요"], hline: ["수평선을 놓을 가격을 누르세요"],
                      fib: ["기준선 시작점을 누르세요", "기준선 끝점을 누르세요", "채널 폭을 정할 점을 누르세요"] };
 let drawings = {};
 try { drawings = JSON.parse(localStorage.getItem("btc-dash-drawings") || "{}"); } catch (e) {}
@@ -698,7 +706,7 @@ try { presetDone = localStorage.getItem("btc-dash-preset") === "safari-1d"; } ca
 if (!presetDone) {
   for (const st of STYLES) for (const tf of ["1D", "3D"]) {
     const k = `${st.key}|${tf}`;
-    if (!(drawings[k] || []).some(d => d.preset === "safari-1d")) (drawings[k] = drawings[k] || []).push(SAFARI_FIB);
+    if (!(drawings[k] || []).some(d => d.preset === "safari-1d")) (drawings[k] = drawings[k] || []).push(JSON.parse(JSON.stringify(SAFARI_FIB)));
   }
   try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); localStorage.setItem("btc-dash-preset", "safari-1d"); } catch (e) {}
 }
@@ -738,9 +746,11 @@ function makeChart(s) {
     macd: chart.addSeries(L.LineSeries, { ...lo, color: accent, lastValueVisible: true, title: "MACD", priceFormat: one }, 2),
     sig: chart.addSeries(L.LineSeries, { ...lo, color: tokenColor("--ema20"), priceFormat: one }, 2),
     markers: null, times: [], index: new Map(), firstTs: null, lastTs: null,
-    lines: [], focusKey: "", drawn: [], preview: [], tool: null, pts: [],
+    lines: [], focusKey: "", tool: null, pts: [], hover: null, selected: null, layer: null,
   };
   c.markers = L.createSeriesMarkers(candles, []);
+  c.layer = makeLayer(s, c);
+  candles.attachPrimitive(c.layer);
   for (const [lv, col] of [[70, short], [50, tokenColor("--muted")], [30, long]]) {
     c.rsi.createPriceLine({ price: lv, color: col, lineWidth: 1, lineStyle: L.LineStyle.Dashed, axisLabelVisible: false });
   }
@@ -754,7 +764,7 @@ function makeChart(s) {
     const r = p && p.seriesData && p.seriesData.get(c.rsi), m = p && p.seriesData && p.seriesData.get(c.macd);
     ohlc.textContent = b ? `시 ${fmt(b.open)} 고 ${fmt(b.high)} 저 ${fmt(b.low)} 종 ${fmt(b.close)}` +
       (r ? ` · RSI ${r.value.toFixed(1)}` : "") + (m ? ` · MACD ${m.value.toFixed(1)}` : "") : hint;
-    if (c.tool && c.pts.length) schedulePreview(s, p);
+    if (c.tool && c.pts.length) { c.hover = p && p.point ? ptAt(c, p.point.x, p.point.y) : null; renderDrawings(s); }
   });
   chart.subscribeClick(p => onChartClick(s, p));
 
@@ -762,6 +772,7 @@ function makeChart(s) {
   card.querySelector("[data-reset]").addEventListener("click", () => resetView(c));
   card.querySelectorAll("[data-tool]").forEach(btn => btn.addEventListener("click", () => onToolButton(s, btn)));
   card.querySelectorAll("[data-tf]").forEach(btn => btn.addEventListener("click", () => chooseTf(s, btn.dataset.tf)));
+  bindDrawing(s, c, box);
   return c;
 }
 
@@ -795,7 +806,7 @@ async function ensureTf(tf) {
 function chooseTf(s, tf) {
   viewTf[s.key] = tf;
   try { localStorage.setItem("btc-dash-viewtf", JSON.stringify(viewTf)); } catch (e) {}
-  if (charts[s.key] && charts[s.key].tool) setTool(s, null);
+  if (charts[s.key]) { if (charts[s.key].tool) setTool(s, null); select(s, null); }
   drawChart(s);
 }
 function drawChart(s) {
@@ -879,101 +890,266 @@ function drawChart(s) {
 
 // ----- 선긋기 · 피보나치 채널 -----
 // 점은 (봉 시각, 가격)으로 저장해 새로고침해도 남는다. 선은 봉 순서 기준으로 곧게 그린다.
-function nearestIndex(c, t) {
-  if (c.index.has(t)) return c.index.get(t);
-  const ts = c.times; let lo = 0, hi = ts.length - 1;
-  if (hi < 0 || t < ts[0] - 2 * TF_MS[c.tf] || t > ts[hi] + 2 * TF_MS[c.tf]) return undefined;  // 차트 범위 밖
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (ts[mid] < t) lo = mid + 1; else hi = mid; }
-  return lo > 0 && t - ts[lo - 1] < ts[lo] - t ? lo - 1 : lo;
+// ----- 그리기 층: 추세선 · 수평선 · 피보나치 채널 -----
+// 차트 위에 직접 그린다. 선을 눌러 선택하면 점을 끌어 수정하거나 선을 끌어 통째로 옮길 수 있고, 잠그면 움직이지 않는다.
+// 점은 (시각, 가격)으로 저장해 확대·이동·봉 변경에도 같은 자리에 그려진다.
+const FIB_COLORS = ["#787b86", "#f23645", "#ff9800", "#4caf50", "#089981", "#00bcd4", "#2962ff", "#9c27b0", "#e91e63", "#787b86", "#f23645"];
+const DRAW_NAME = { line: "추세선", hline: "수평선", fib: "피보나치 채널" };
+let drawSeq = 0;
+const newId = () => Date.now().toString(36) + (drawSeq++).toString(36);
+for (const list of Object.values(drawings)) for (const d of list) if (!d.id) d.id = newId();
+
+function withAlpha(hex, a) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
-function shapeSeries(c, d) {
-  const L = window.LightweightCharts, out = [];
-  const last = c.times.length - 1;
-  if (last < 1) return out;
-  const seg = (j1, p1, j2, p2, color, title, style, width) => {
-    if (j1 === j2) return;
-    if (j1 > j2) [j1, p1, j2, p2] = [j2, p2, j1, p1];
-    const ser = c.chart.addSeries(L.LineSeries, {
-      color, lineWidth: width || (d.type === "line" ? 2 : 1), lineStyle: style ?? L.LineStyle.Solid,
-      priceLineVisible: false, lastValueVisible: !!title, title: title || "", crosshairMarkerVisible: false,
-      autoscaleInfoProvider: () => null,  // 그린 선 때문에 차트 눈금이 바뀌지 않게
-    }, 0);
-    ser.setData([{ time: toTime(c.times[j1]), value: p1 }, { time: toTime(c.times[j2]), value: p2 }]);
-    out.push(ser);
-  };
-  const color = tokenColor("--draw");
+// 시각 ↔ 봉 순번(소수 포함). 봉 사이와 차트 밖도 이어서 계산
+function logicalOf(c, t) {
+  const ts = c.times, n = ts.length, step = TF_MS[c.tf];
+  if (!n) return null;
+  if (t <= ts[0]) return (t - ts[0]) / step;
+  if (t >= ts[n - 1]) return n - 1 + (t - ts[n - 1]) / step;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (ts[mid] <= t) lo = mid; else hi = mid; }
+  return lo + (t - ts[lo]) / (ts[hi] - ts[lo]);
+}
+function timeOf(c, l) {
+  const ts = c.times, n = ts.length, step = TF_MS[c.tf];
+  if (l <= 0) return ts[0] + l * step;
+  if (l >= n - 1) return ts[n - 1] + (l - (n - 1)) * step;
+  const j = Math.floor(l);
+  return ts[j] + (l - j) * (ts[j + 1] - ts[j]);
+}
+// 차트 라이브러리는 소수 순번 변환을 지원하지 않아, 봉 0과 1의 위치로 직선 변환을 직접 한다
+function scaleX(c) {
+  const ts = c.chart.timeScale(), x0 = ts.logicalToCoordinate(0), x1 = ts.logicalToCoordinate(1);
+  return x0 === null || x1 === null || x1 === x0 ? null : { x0, w: x1 - x0 };
+}
+const xOfLogical = (c, l) => { const k = scaleX(c); return k ? k.x0 + l * k.w : null; };
+const logicalOfX = (c, x) => { const k = scaleX(c); return k ? (x - k.x0) / k.w : null; };
+const xOf = (c, t) => { const l = logicalOf(c, t); return l === null ? null : xOfLogical(c, l); };
+const yOf = (c, p) => c.candles.priceToCoordinate(p);
+function ptAt(c, x, y) {
+  if (!c.times.length) return null;
+  const l = logicalOfX(c, x), p = c.candles.coordinateToPrice(y);
+  return l === null || p === null ? null : { t: timeOf(c, l), p };
+}
+
+// 그림 하나를 화면 좌표의 선·칠·글자·조절점으로
+function geometry(c, d, W) {
+  const P = d.pts.map(q => ({ x: xOf(c, q.t), y: yOf(c, q.p) }));
+  if (!P.length || P.some(q => q.x === null || q.y === null)) return null;
+  const g = { segs: [], fills: [], labels: [], handles: P.map((q, i) => ({ x: q.x, y: q.y, i })) };
+  const color = d.color || tokenColor("--draw");
   if (d.type === "line") {
-    const [P, Q] = [d.pts[0], d.pts[1] || d.pts[0]], j1 = nearestIndex(c, P.t), j2 = nearestIndex(c, Q.t);
-    if (j1 !== undefined && j2 !== undefined) seg(j1, P.p, j2, Q.p, color);
-  } else if (d.type === "fib" && d.pts.length >= 2) {
+    const Q = P[1] || P[0];
+    g.segs.push({ x1: P[0].x, y1: P[0].y, x2: Q.x, y2: Q.y, color, width: 2 });
+  } else if (d.type === "hline") {
+    g.segs.push({ x1: 0, y1: P[0].y, x2: W, y2: P[0].y, color, width: 1.5 });
+    g.labels.push({ x: W - 6, y: P[0].y - 5, text: fmt(d.pts[0].p), color, align: "right" });
+    g.handles = [{ x: Math.max(24, Math.min(W - 24, P[0].x)), y: P[0].y, i: 0 }];
+  } else if (d.type === "fib") {
     const [A, B, C] = d.pts;
-    if (A.t === B.t) return out;
-    // 기준선(0) = A→B, 1 = C를 지나는 평행선. 가격은 시각에 비례해 계산
-    const base = t => A.p + (B.p - A.p) * (t - A.t) / (B.t - A.t);
-    if (!C) {
-      const j1 = nearestIndex(c, A.t), j2 = nearestIndex(c, B.t);
-      if (j1 !== undefined && j2 !== undefined) seg(j1, A.p, j2, B.p, color);
-      return out;
+    if (!B || A.t === B.t) {
+      if (B) g.segs.push({ x1: P[0].x, y1: P[0].y, x2: P[1].x, y2: P[1].y, color, width: 1.5 });
+      return g;
     }
-    const off = C.p - base(C.t);
-    // 차트 왼쪽 끝부터 오른쪽 끝까지 봉마다 점을 찍어, 오른쪽 가격표가 현재 봉 위치의 가격을 보여 주게
-    (d.levels || FIB_LEVELS).forEach((lv, i) => {
-      const main = lv === 0 || lv === 1;
-      const ser = c.chart.addSeries(L.LineSeries, {
-        color: (d.colors && d.colors[i]) || (main ? color : tokenColor("--fib")), lineWidth: d.colors ? 2 : 1,
-        lineStyle: main ? L.LineStyle.Solid : L.LineStyle.Dashed,
-        priceLineVisible: false, lastValueVisible: true, title: String(lv), crosshairMarkerVisible: false,
-        autoscaleInfoProvider: () => null,
-      }, 0);
-      ser.setData(c.times.map(t => ({ time: toTime(t), value: base(t) + lv * off })));
-      out.push(ser);
+    const base = t => A.p + (B.p - A.p) * (t - A.t) / (B.t - A.t);
+    const lL = logicalOfX(c, 0), lR = logicalOfX(c, W);
+    if (lL === null || lR === null) return g;
+    const tL = timeOf(c, lL), tR = timeOf(c, lR);
+    if (!C) {  // 세 번째 점 전: 기준선만 화면 끝까지
+      g.segs.push({ x1: 0, y1: yOf(c, base(tL)), x2: W, y2: yOf(c, base(tR)), color, width: 1.5 });
+      return g;
+    }
+    const off = C.p - base(C.t), levels = d.levels || FIB_LEVELS, cols = d.colors || FIB_COLORS;
+    const rows = levels.map((lv, i) => ({ lv, color: cols[i % cols.length], yL: yOf(c, base(tL) + lv * off), yR: yOf(c, base(tR) + lv * off), pR: base(tR) + lv * off }))
+                       .sort((a, b) => a.lv - b.lv);
+    rows.forEach((r, i) => {
+      g.segs.push({ x1: 0, y1: r.yL, x2: W, y2: r.yR, color: r.color, width: r.lv === 0 || r.lv === 1 ? 2 : 1.5 });
+      g.labels.push({ x: W - 6, y: r.yR - 5, text: `${r.lv} (${fmt0(r.pR)})`, color: r.color, align: "right" });
+      const nx = rows[i + 1];
+      if (nx) g.fills.push({ pts: [[0, r.yL], [W, r.yR], [W, nx.yR], [0, nx.yL]], color: withAlpha(nx.color, 0.1) });
     });
   }
-  return out;
+  return g;
 }
-function renderDrawings(s) {
-  const c = charts[s.key]; if (!c) return;
-  c.drawn.forEach(ser => c.chart.removeSeries(ser));
-  c.drawn = (drawings[dkey(s)] || []).flatMap(d => shapeSeries(c, d));
+
+function paintLayer(s, c, ctx, W, H, background) {
+  const list = (drawings[dkey(s)] || []).slice();
+  if (c.tool && c.hover) list.push({ id: "_temp", type: c.tool, pts: [...c.pts, c.hover] });
+  const panel = tokenColor("--panel"), font = tokenColor("--font-num");
+  for (const d of list) {
+    const g = geometry(c, d, W);
+    if (!g) continue;
+    if (background) {
+      for (const f of g.fills) {
+        ctx.fillStyle = f.color; ctx.beginPath();
+        f.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+        ctx.closePath(); ctx.fill();
+      }
+      continue;
+    }
+    const sel = d.id === c.selected || d.id === "_temp";
+    ctx.setLineDash([]);  // 그린 선은 모두 실선 (진입·손절 점선과 구분)
+    for (const sg of g.segs) {
+      ctx.strokeStyle = sg.color; ctx.lineWidth = sg.width + (sel ? 0.5 : 0);
+      ctx.beginPath(); ctx.moveTo(sg.x1, sg.y1); ctx.lineTo(sg.x2, sg.y2); ctx.stroke();
+    }
+    ctx.font = `11px ${font}`; ctx.textBaseline = "alphabetic";
+    for (const lb of g.labels) { ctx.fillStyle = lb.color; ctx.textAlign = lb.align; ctx.fillText(lb.text, lb.x, lb.y); }
+    if (sel) for (const h of g.handles) {
+      ctx.lineWidth = 2; ctx.strokeStyle = d.locked ? tokenColor("--muted") : tokenColor("--accent"); ctx.fillStyle = panel;
+      ctx.beginPath();
+      if (d.locked) ctx.rect(h.x - 4.5, h.y - 4.5, 9, 9); else ctx.arc(h.x, h.y, 5.5, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+  }
 }
-function clearPreview(c) { c.preview.forEach(ser => c.chart.removeSeries(ser)); c.preview = []; }
-let previewRaf = 0;
-function schedulePreview(s, p) {
-  cancelAnimationFrame(previewRaf);
-  previewRaf = requestAnimationFrame(() => {
-    const c = charts[s.key], q = pointFrom(c, p);
-    clearPreview(c);
-    if (q) c.preview = shapeSeries(c, { type: c.tool, pts: [...c.pts, q] });
+
+function makeLayer(s, c) {
+  let request = null;
+  const view = background => ({
+    zOrder: () => (background ? "bottom" : "top"),
+    renderer: () => ({ draw: target => target.useMediaCoordinateSpace(({ context, mediaSize }) =>
+      paintLayer(s, c, context, mediaSize.width, mediaSize.height, background)) }),
   });
+  const views = [view(true), view(false)];
+  return {
+    attached: p => { request = p.requestUpdate; },
+    detached: () => { request = null; },
+    updateAllViews: () => {},
+    paneViews: () => views,
+    update: () => request && request(),
+  };
 }
-function pointFrom(c, p) {
-  if (!p || !p.point || p.logical === undefined || (p.paneIndex !== undefined && p.paneIndex !== 0)) return null;
-  const j = Math.max(0, Math.min(c.times.length - 1, Math.round(p.logical)));
-  const price = c.candles.coordinateToPrice(p.point.y);
-  return price === null ? null : { t: c.times[j], p: price };
+function renderDrawings(s) { const c = charts[s.key]; if (c && c.layer) c.layer.update(); }
+
+function distSeg(px, py, sg) {
+  const dx = sg.x2 - sg.x1, dy = sg.y2 - sg.y1, len = dx * dx + dy * dy;
+  const u = len ? Math.max(0, Math.min(1, ((px - sg.x1) * dx + (py - sg.y1) * dy) / len)) : 0;
+  return Math.hypot(px - (sg.x1 + u * dx), py - (sg.y1 + u * dy));
 }
+function hitTest(s, c, x, y) {
+  const W = c.chart.paneSize(0).width, R = matchMedia("(pointer: coarse)").matches ? 18 : 9;
+  const list = (drawings[dkey(s)] || []).slice().reverse();
+  const sel = list.find(d => d.id === c.selected);
+  if (sel) {
+    const g = geometry(c, sel, W);
+    const h = g && g.handles.find(h => Math.hypot(h.x - x, h.y - y) <= R);
+    if (h) return { d: sel, handle: h.i };
+  }
+  for (const d of list) {
+    const g = geometry(c, d, W);
+    if (g && g.segs.some(sg => distSeg(x, y, sg) <= R * 0.7)) return { d, handle: null };
+  }
+  return null;
+}
+
+function select(s, id) {
+  const c = charts[s.key], card = $("card-" + s.key), bar = card.querySelector("[data-drawbar]");
+  c.selected = id;
+  const d = (drawings[dkey(s)] || []).find(x => x.id === id);
+  bar.hidden = !d;
+  if (d) {
+    bar.querySelector("[data-drawname]").textContent = DRAW_NAME[d.type] + (d.locked ? " · 잠김" : "");
+    bar.querySelector('[data-act="lock"]').textContent = d.locked ? "잠금 해제" : "잠금";
+    bar.querySelector('[data-act="del"]').disabled = !!d.locked;
+  }
+  // 선을 고른 동안은 손가락으로 끌어도 페이지가 스크롤되지 않게
+  card.querySelector("[data-chart]").style.touchAction = d && !d.locked ? "none" : "";
+  renderDrawings(s);
+}
+function deleteSelected(s) {
+  const c = charts[s.key], list = drawings[dkey(s)] || [];
+  const i = list.findIndex(d => d.id === c.selected);
+  if (i < 0 || list[i].locked) return;
+  list.splice(i, 1); saveDrawings(); select(s, null);
+}
+
+function bindDrawing(s, c, box) {
+  let drag = null, swallow = false;
+  const local = e => { const r = box.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const restore = () => c.chart.applyOptions({
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }, handleScale: true });
+  box.addEventListener("pointerdown", e => {
+    swallow = false;
+    if (c.tool) return;  // 새로 그리는 중에는 차트 클릭으로 점을 찍음
+    const { x, y } = local(e), ps = c.chart.paneSize(0);
+    if (x > ps.width || y > ps.height) return;
+    const hit = hitTest(s, c, x, y);
+    if (!hit) { if (c.selected) select(s, null); return; }
+    select(s, hit.d.id);
+    swallow = true; e.stopPropagation();
+    if (hit.d.locked) return;  // 잠긴 선은 고르기만
+    const start = ptAt(c, x, y);
+    if (!start) return;
+    drag = { d: hit.d, handle: hit.handle, start, orig: hit.d.pts.map(q => ({ ...q })) };
+    c.chart.applyOptions({ handleScroll: false, handleScale: false });
+    try { box.setPointerCapture(e.pointerId); } catch (err) {}
+  }, true);
+  box.addEventListener("pointermove", e => {
+    if (!drag) return;
+    e.stopPropagation();
+    const { x, y } = local(e), q = ptAt(c, x, y);
+    if (!q) return;
+    const d = drag.d;
+    if (drag.handle !== null) d.pts[drag.handle] = d.type === "hline" ? { t: drag.orig[0].t, p: q.p } : q;
+    else { const dt = q.t - drag.start.t, dp = q.p - drag.start.p; d.pts = drag.orig.map(o => ({ t: o.t + dt, p: o.p + dp })); }
+    renderDrawings(s);
+  }, true);
+  const end = () => { if (drag) { drag = null; saveDrawings(); restore(); } };
+  box.addEventListener("pointerup", end, true);
+  box.addEventListener("pointercancel", end, true);
+  // 같은 누름이 차트 이동으로 이어지지 않게
+  for (const type of ["mousedown", "touchstart"]) box.addEventListener(type, e => { if (swallow) e.stopPropagation(); }, { capture: true });
+
+  const bar = $("card-" + s.key).querySelector("[data-drawbar]");
+  bar.querySelector('[data-act="lock"]').addEventListener("click", () => {
+    const d = (drawings[dkey(s)] || []).find(x => x.id === c.selected);
+    if (!d) return;
+    d.locked = !d.locked; saveDrawings(); select(s, d.id);
+  });
+  bar.querySelector('[data-act="del"]').addEventListener("click", () => deleteSelected(s));
+  bar.querySelector('[data-act="close"]').addEventListener("click", () => select(s, null));
+}
+document.addEventListener("keydown", e => {
+  if (!/^(Delete|Backspace)$/.test(e.key) || /^(INPUT|TEXTAREA)$/.test((e.target || {}).tagName || "")) return;
+  for (const s of STYLES) if (charts[s.key] && charts[s.key].selected) deleteSelected(s);
+});
+
 function setTool(s, tool) {
   const c = charts[s.key], card = $("card-" + s.key);
-  c.tool = tool; c.pts = []; clearPreview(c);
+  if (tool) select(s, null);
+  c.tool = tool; c.pts = []; c.hover = null; renderDrawings(s);
   card.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("active", b.dataset.tool === tool));
   card.querySelector("[data-hint]").textContent = tool ? TOOL_STEPS[tool][0] + " (버튼을 한 번 더 누르면 취소)" : "";
 }
 function onToolButton(s, btn) {
   const c = charts[s.key], tool = btn.dataset.tool;
   if (!c) return;
-  if (tool === "line" || tool === "fib") { setTool(s, c.tool === tool ? null : tool); return; }
-  if (tool === "undo") { (drawings[dkey(s)] || []).pop(); saveDrawings(); renderDrawings(s); return; }
+  if (TOOL_STEPS[tool]) { setTool(s, c.tool === tool ? null : tool); return; }
+  const list = drawings[dkey(s)] || [];
+  if (tool === "undo") {
+    for (let i = list.length - 1; i >= 0; i--) if (!list[i].locked) { list.splice(i, 1); break; }
+    saveDrawings(); select(s, null); return;
+  }
   if (tool === "clear") {
-    // 실수로 지우지 않게 한 번 더 누를 때만 지움
-    if (btn.dataset.armed) { drawings[dkey(s)] = []; saveDrawings(); renderDrawings(s); delete btn.dataset.armed; btn.textContent = "모두 지우기"; return; }
-    btn.dataset.armed = "1"; btn.textContent = "한 번 더 누르면 지움";
+    // 실수로 지우지 않게 한 번 더 누를 때만, 잠긴 선은 남김
+    if (btn.dataset.armed) {
+      drawings[dkey(s)] = list.filter(d => d.locked); saveDrawings(); select(s, null);
+      delete btn.dataset.armed; btn.textContent = "모두 지우기"; return;
+    }
+    btn.dataset.armed = "1"; btn.textContent = "한 번 더 누르면 지움 (잠긴 선 제외)";
     setTimeout(() => { delete btn.dataset.armed; btn.textContent = "모두 지우기"; }, 3000);
   }
 }
 function onChartClick(s, p) {
   const c = charts[s.key];
-  if (!c || !c.tool) return;
-  const q = pointFrom(c, p);
+  if (!c || !c.tool || !p || !p.point || (p.paneIndex !== undefined && p.paneIndex !== 0)) return;
+  const q = ptAt(c, p.point.x, p.point.y);
   if (!q) return;
   c.pts.push(q);
   const need = TOOL_STEPS[c.tool].length;
@@ -981,8 +1157,9 @@ function onChartClick(s, p) {
     $("card-" + s.key).querySelector("[data-hint]").textContent = TOOL_STEPS[c.tool][c.pts.length] + " (버튼을 한 번 더 누르면 취소)";
     return;
   }
-  (drawings[dkey(s)] = drawings[dkey(s)] || []).push({ type: c.tool, pts: c.pts });
-  saveDrawings(); setTool(s, null); renderDrawings(s);
+  const d = { id: newId(), type: c.tool, pts: c.pts };
+  (drawings[dkey(s)] = drawings[dkey(s)] || []).push(d);
+  saveDrawings(); setTool(s, null); select(s, d.id);
 }
 
 // ===== 실시간 시세 (비트겟 웹소켓) =====
@@ -1150,7 +1327,7 @@ try {
   }
 } catch (e) {}
 // 점검용으로 내부 상태만 노출
-window.__dash = { state, store, STYLES, charts, get drawings() { return drawings; }, levels, tradePath, compute, renderAll, renderLog, onTick, get logItems() { return logItems; } };
+window.__dash = { state, store, STYLES, charts, select, hitTest, geometry, dkey, get drawings() { return drawings; }, levels, tradePath, compute, renderAll, renderLog, onTick, get logItems() { return logItems; } };
 init();
 connectLive();
 })();

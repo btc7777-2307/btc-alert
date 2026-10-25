@@ -116,10 +116,25 @@ def usd(x, sign=False):
     return f"{'-' if x < 0 else '+' if sign else ''}${abs(x):,.2f}"
 
 
+_fx = {}
+
+
+def usdt_krw():
+    """업비트 USDT 원화 시세 (실패하면 1,400원). 한 번 실행에 한 번만 조회."""
+    if "v" not in _fx:
+        try:
+            with urllib.request.urlopen("https://api.upbit.com/v1/ticker?markets=KRW-USDT", timeout=10) as r:
+                _fx["v"] = float(json.load(r)[0]["trade_price"])
+        except Exception:
+            _fx["v"] = 1400.0
+    return _fx["v"]
+
+
 def settings():
-    """시드(달러)·기준 위험(%)·배율. GitHub 저장소 변수에서 읽고, 없으면 기본값."""
-    return (float(os.environ.get("SEED_USD") or 150), float(os.environ.get("RISK_PCT") or 5) / 100,
-            float(os.environ.get("LEVERAGE") or 30))
+    """매번 진입할 때 쓰는 시드(원 → 달러)·기준 위험(%)·배율. GitHub 저장소 변수에서 읽음."""
+    seed_krw = float(os.environ.get("SEED_KRW") or 200000)
+    return (seed_krw / usdt_krw(), float(os.environ.get("RISK_PCT") or 5) / 100,
+            float(os.environ.get("LEVERAGE") or 30), seed_krw)
 
 
 def max_safe_leverage(stop_pct):
@@ -127,22 +142,26 @@ def max_safe_leverage(stop_pct):
     return max(1, int(0.8 / (stop_pct + 0.004)))
 
 
-def plan(entry, stop_pct):
-    """계획 물량 = 손절폭만큼 움직였을 때 시드의 RISK_PCT%가 되는 크기. 1차 40%, 추가 60%."""
-    seed, risk, lev = settings()
-    notional = seed * risk / stop_pct
+def plan(entry, risk):
+    """계획 물량 = 손절폭(risk)만큼 움직이면 시드의 RISK_PCT%가 되는 크기. 1차 40%, 추가 60%."""
+    seed, rk, lev, seed_krw = settings()
+    stop_pct = risk / entry
+    notional = seed * rk / stop_pct
     use_lev = lev if stop_pct < (1 / lev - 0.004) * 0.9 else max_safe_leverage(stop_pct)
     first, add = notional * stg.FIRST, notional * (1 - stg.FIRST)
-    return dict(seed=seed, risk=risk, lev=lev, use_lev=use_lev, first=first, add=add,
-                m1=first / use_lev, m2=add / use_lev, loss1=first * stop_pct + first * (stg.FEE_IN + stg.FEE_OUT))
+    return dict(seed=seed, seed_krw=seed_krw, lev=lev, use_lev=use_lev, first=first, add=add,
+                m1=first / use_lev, m2=add / use_lev)
 
 
-def pnl_at(t, px):
-    """지금 들어가 있는 물량으로 px에서 끝났을 때 손익(달러, 수수료 포함)."""
-    p = plan(t["entry"], t["risk"] / t["entry"])
-    sizes = [p["first"]] + ([p["add"]] if t.get("added") else [])
-    prices = [t["entry"]] + ([t["add_px"]] if t.get("added") else [])
-    return sum(n * ((px - q) * t["d"] / q - (stg.FEE_IN + stg.FEE_OUT)) for n, q in zip(sizes, prices)), p["seed"]
+def pnl(entry, add_px, d, risk, px, added):
+    """px에서 끝났을 때 손익(달러, 수수료 포함). added면 추가 진입분까지."""
+    p = plan(entry, risk)
+    legs = [(p["first"], entry)] + ([(p["add"], add_px)] if added else [])
+    return sum(n * ((px - q) * d / q - (stg.FEE_IN + stg.FEE_OUT)) for n, q in legs)
+
+
+def pct_of(money, seed):
+    return f"시드의 {money / seed * 100:+.1f}%"
 
 
 def why_lines(ind, k, d):
@@ -154,52 +173,66 @@ def why_lines(ind, k, d):
             f"• 큰 흐름 선(EMA200 = 최근 200개 봉 평균가 {fmt(ind['e200'][k])})보다 아래예요 → 큰 흐름도 내림"]
 
 
+def order_summary(e, d, risk, atr):
+    """메시지 맨 아래 주문 정리: 진입 · 손절 · 추가 진입 · 수익 예시."""
+    p = plan(e, risk)
+    seed, stop, add = p["seed"], e - d * risk, e + d * risk
+    loss = pnl(e, add, d, risk, stop, False)
+    lines = [
+        f"━━ 주문 정리 (시드 {usd(seed)} = {p['seed_krw']:,.0f}원) ━━",
+        f"① 진입 {fmt(e)} · {p['use_lev']:g}배 · {usd(p['m1'])} 넣기 (시드의 {p['m1'] / seed * 100:.1f}%)",
+        f"✋ 손절 {fmt(stop)} · 손절되면 {usd(loss)} ({pct_of(loss, seed)})",
+        f"② 추가 진입 {fmt(add)} · {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
+        f"   → 이때 손절을 {fmt(e)}(처음 진입가)로 옮기기 · 그 뒤 손절되면 {usd(pnl(e, add, d, risk, e, True))} (처음 진입분은 본전, 추가분만 손해)",
+        "💰 수익 예시 (②까지 하고 그 가격에서 끝나면)",
+    ]
+    for k in (2, 3, 5):
+        px = e + d * k * risk
+        money = pnl(e, add, d, risk, px, True)
+        lines.append(f"   {fmt(px)} → {usd(money, True)} ({pct_of(money, seed)})")
+    lines.append("익절가는 따로 없어요. 손절선이 가격을 따라오다 닿으면 끝나요.")
+    lines.append(f"(손절폭 = ATR×2 = 최근 4시간 평균 움직임 {fmt(atr)}달러의 2배)")
+    if p["use_lev"] < p["lev"]:
+        lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산될 수 있어서 {p['use_lev']:g}배로 계산했어요")
+    return lines
+
+
 def signal_message(ind, t):
     k, d, e = t["sig_k"], t["d"], t["entry"]
     a = ind["atr"][k]
-    stop, add = e - d * stg.STOP_ATR * a, e + d * stg.STOP_ATR * a
-    p = plan(e, stg.STOP_ATR * a / e)
-    seed = p["seed"]
-    lines = [
+    return "\n".join([
         f"{'🟢 롱' if d == 1 else '🔴 숏'} 신호 · 4시간봉",
-        f"진입가 {fmt(e)} 근처",
         "",
         "왜?",
         *why_lines(ind, k, d),
         "",
-        "할 일",
-        f"① 지금: {p['use_lev']:g}배로 시드의 {p['m1'] / seed * 100:.1f}% ({usd(p['m1'])}) 넣기",
-        f"② {fmt(add)}까지 {'오르면' if d == 1 else '내려가면'}: {p['use_lev']:g}배로 시드의 {p['m2'] / seed * 100:.1f}% ({usd(p['m2'])}) 더 넣고 손절을 {fmt(e)}(본전)로",
-        f"손절 {fmt(stop)} (ATR×2 = 최근 4시간 평균 움직임 {fmt(a)}달러의 2배)",
-        f"①만 하고 손절되면 약 {usd(p['loss1'])} 잃어요 (시드의 {p['loss1'] / seed * 100:.1f}%)",
-    ]
-    if p["use_lev"] < p["lev"]:
-        lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산될 수 있어서 {p['use_lev']:g}배로 계산했어요")
-    lines.append("※ 참고용이에요. 주문은 직접 판단하세요.")
-    return "\n".join(lines)
+        *order_summary(e, d, stg.STOP_ATR * a, a),
+        "※ 참고용이에요. 주문은 직접 판단하세요.",
+    ])
 
 
 def event_message(ind, t, kind, m, px):
-    d, e = t["d"], t["entry"]
+    d, e, risk = t["d"], t["entry"], t["risk"]
     side = "롱" if d == 1 else "숏"
+    seed = plan(e, risk)["seed"]
     if kind == "add":
-        p = plan(e, t["risk"] / e)
+        p = plan(e, risk)
         return "\n".join([
             f"📈 {side} 추가 진입 · {fmt(px)} 도달",
-            f"{p['use_lev']:g}배로 시드의 {p['m2'] / p['seed'] * 100:.1f}% ({usd(p['m2'])}) 더 넣고, 손절을 {fmt(e)}(본전)로 옮기세요",
-            "이제 손절돼도 손해는 거의 없어요",
+            f"② {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
+            f"✋ 손절을 {fmt(e)}(처음 진입가)로 옮기세요 → 그 뒤 손절되면 {usd(pnl(e, t['add_px'], d, risk, e, True))} (추가분만 손해)",
         ])
     if kind == "trail":
-        money, seed = pnl_at(t, px)
+        money = pnl(e, t["add_px"], d, risk, px, t.get("added"))
         return "\n".join([
             f"🔒 {side} 손절 옮기기 → {fmt(px)}",
-            f"여기서 끝나도 {usd(money, True)} ({money / seed * 100:+.1f}%)",
+            f"여기서 끝나도 {usd(money, True)} ({pct_of(money, seed)})",
         ])
     if kind == "exit":
-        money, seed = pnl_at(t, px)
+        money = pnl(e, t["add_px"], d, risk, px, t.get("added"))
         return "\n".join([
             f"{'✅' if money > 0 else '❌'} {side} 끝 · {fmt(px)}에서 정리",
-            f"결과 {usd(money, True)} (시드의 {money / seed * 100:+.1f}%) · {m - t['entry_k'] + 1}개 봉 동안 보유",
+            f"결과 {usd(money, True)} ({pct_of(money, seed)}) · {'추가 진입 포함' if t.get('added') else '①만 진입'} · 4시간봉 {m - t['entry_k'] + 1}개 동안",
         ])
     return ""
 
@@ -213,7 +246,7 @@ def status_line(ind, trades):
     side = "롱" if t["d"] == 1 else "숏"
     if t["state"] == "pending":
         return f"지금: {side} 신호 · 다음 봉에서 진입"
-    money, _ = pnl_at(t, ind["c"][-1])
+    money = pnl(t["entry"], t["add_px"], t["d"], t["risk"], ind["c"][-1], t.get("added"))
     return f"지금: {side} 진행 중 · 진입 {fmt(t['entry'])} · 손절 {fmt(t['stop'])} · 현재 {usd(money, True)}"
 
 

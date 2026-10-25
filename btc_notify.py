@@ -157,6 +157,8 @@ def main():
         return
     st = load_state()
     now_ms = time.time() * 1000
+    if os.environ.get("TEST_MESSAGE") == "true":
+        send(st, f"🔔 테스트 알림 · {kst(now_ms)}\n이 메시지가 보이면 알림 설정이 끝난 것입니다.")
     cache = {tf: bs.candles(tf, n) for tf, n in CANDLES.items()}
     inds = {tf: bs.indicators(cs) for tf, cs in cache.items()}
     for tf, cs in cache.items():

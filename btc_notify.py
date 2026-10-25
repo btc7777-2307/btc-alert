@@ -38,10 +38,21 @@ def save_state(st):
 
 
 def telegram(method, **params):
-    token = os.environ["TELEGRAM_TOKEN"]
+    # 붙여넣을 때 섞여 들어간 빈칸·줄바꿈·"bot" 접두어는 정리
+    token = "".join(os.environ["TELEGRAM_TOKEN"].split())
+    if token.lower().startswith("bot") and ":" in token[3:]:
+        token = token[3:]
     data = urllib.parse.urlencode(params).encode()
-    with urllib.request.urlopen(f"https://api.telegram.org/bot{token}/{method}", data=data, timeout=15) as r:
-        d = json.load(r)
+    try:
+        with urllib.request.urlopen(f"https://api.telegram.org/bot{token}/{method}", data=data, timeout=15) as r:
+            d = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 404):
+            sys.exit("텔레그램 토큰이 맞지 않습니다. BotFather의 토큰(숫자:영문 형태)을 전부 복사해 "
+                     "GitHub의 TELEGRAM_TOKEN을 다시 등록하세요.")
+        if e.code == 400 and method == "sendMessage":
+            sys.exit("텔레그램 채팅 번호가 맞지 않거나, 내 봇에서 '시작'을 누르지 않았습니다.")
+        raise
     if not d.get("ok"):
         raise RuntimeError(f"텔레그램 오류: {d.get('description')}")
     return d["result"]

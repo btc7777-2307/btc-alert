@@ -126,6 +126,12 @@ tr:last-child td { border-bottom: 0; }
 .btn-link { font-size: 12px; color: var(--fg); text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; background: var(--panel-2); white-space: nowrap; }
 .btn-link:hover { border-color: var(--accent); }
 .plan .kv .v { font-size: 15px; }
+.flow { margin: 4px 0 0; padding-left: 4px; list-style: none; display: grid; gap: 8px; font-size: 14px; }
+.flow li { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
+.flow li.done { opacity: .55; }
+.flow li.done b:first-child::after { content: " ✓"; color: var(--long); }
+.flow li.now { background: var(--long-bg); }
+.loss { margin: 8px 0 0; font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--short-bg); }
 table.order { font-size: 13px; }
 table.order td, table.order th { text-align: left; white-space: normal; vertical-align: top; }
 table.order td:first-child { white-space: nowrap; font-weight: 600; }
@@ -597,34 +603,37 @@ function cardSkeleton(s) {
 const usd = (x, sign = false) => Number.isFinite(x) ? `${x < 0 ? "-" : sign ? "+" : ""}$${Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
 const sp = (x, d = 1) => `${x >= 0 ? "+" : ""}${x.toFixed(d)}`;
 
-// 주문 정리: 진입 · 손절 · 추가 진입 · 수익 예시 (텔레그램 알림과 같은 계산)
+// 주문 정리: 텔레그램 알림과 같은 순서 (1 진입 → 2 추가 → 3 30% 익절 → 4 나머지) + 손절
 function planHtml(entry, risk, d, title, t) {
   const p = orderPlan(entry, risk / entry), seed = p.seed;
-  const addPx = entry + d * risk, stop0 = entry - d * risk, added = !!(t && t.added);
+  const addPx = entry + d * risk, stop0 = entry - d * risk, added = !!(t && t.added), tookTp = !!(t && t.tp);
+  const go = d === 1 ? "오르면" : "내려가면", back = d === 1 ? "내려가면" : "오르면", side = DIR[d];
   const pc = v => `시드의 ${v >= 0 ? "+" : ""}${(v / seed * 100).toFixed(1)}%`;
-  const row = (step, price, what, cls = "") => `<tr class="${cls}"><td>${step}</td><td class="num">${price}</td><td>${what}</td></tr>`;
+  const done = x => x ? ' class="done"' : "";
   const loss1 = legPnl(p, entry, addPx, d, stop0, false), lossAfter = legPnl(p, entry, addPx, d, entry, true);
-  let rows = row("① 진입", fmt0(entry), `${p.useLev}배 · <b>${usd(p.first.margin)}</b> 넣기 (시드의 ${(p.first.margin / seed * 100).toFixed(1)}%) · ${p.first.btc.toFixed(4)} BTC`)
-    + row("✋ 손절", fmt0(stop0), `손절되면 <b class="bad">${usd(loss1)}</b> (${pc(loss1)})`)
-    + row("② 추가 진입", added ? "완료" : fmt0(addPx), `${p.useLev}배 · <b>${usd(p.add.margin)}</b> 더 넣기 (시드의 ${(p.add.margin / seed * 100).toFixed(1)}%) · ${p.add.btc.toFixed(4)} BTC`)
-    + row("", "", `→ 이때 손절을 <b>${fmt0(entry)}</b>(처음 진입가)로 옮기기 · 그 뒤 손절되면 <b class="bad">${usd(lossAfter)}</b> (추가분만 손해)`, "sub")
-    + row("💵 익절", t && t.tp ? "완료" : `RSI ${d === 1 ? "70↑" : "30↓"}`, `4시간봉이 RSI ${d === 1 ? "70 이상" : "30 이하"}로 마감하면 들고 있는 물량의 <b>30%</b> 팔기 · 손절은 처음 진입가 이상으로`)
-    + row("", "", `RSI = 최근 14개 봉의 오른 힘과 내린 힘 점수(0~100). ${d === 1 ? "70 넘으면 과열" : "30 밑이면 너무 빠짐"} · 나머지 70%는 손절선이 따라가다 닿으면 끝`, "sub");
+  let now = "";
   if (t && t.state === "open" && t.stop !== stop0) {
-    const now = rAt(t, t.stop) * seed * settings.risk / 100;
-    rows += row("🔒 지금 손절", fmt0(t.stop), `여기서 끝나면 <b class="${now >= 0 ? "good" : "bad"}">${usd(now, true)}</b> (${pc(now)})`);
+    const v = rAt(t, t.stop) * seed * settings.risk / 100;
+    now = `<li class="now">🔒 지금 손절선은 <b>${fmt0(t.stop)}</b> · 여기서 끝나면 <b class="${v >= 0 ? "good" : "bad"}">${usd(v, true)}</b> (${pc(v)})</li>`;
   }
-  rows += row("💰 참고", "", "가격이 이만큼 가면 (②까지 했을 때) · 익절 목표 아님, 손절선이 따라가며 지켜 줘요", "sub");
-  for (const k of [2, 3, 5]) {
-    const px = entry + d * k * risk, m = legPnl(p, entry, addPx, d, px, true);
-    rows += row("", fmt0(px), `<b class="good">${usd(m, true)}</b> (${pc(m)})`);
-  }
+  const ex = [2, 3, 5].map(k => { const px = entry + d * k * risk; return `${fmt0(px)} → <b class="good">${usd(legPnl(p, entry, addPx, d, px, true), true)}</b>`; }).join(" · ");
   const liqPx = entry * (1 - d * p.liq);
   return `
     <span class="label">${title} · 시드 ${usd(seed)} (= ${settings.seedKrw.toLocaleString("ko-KR")}원)</span>
-    <div class="scroll"><table class="order"><thead><tr><th>할 일</th><th>가격</th><th>넣을 돈 · 결과</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="note">가격 목표는 따로 없어요. 남은 물량은 손절선이 따라오다 닿으면 끝나요. ${p.useLev}배 강제 청산 가격은 ${fmt0(liqPx)}이에요.
-      ${p.useLev < p.lev ? `<span class="bad">이번 신호는 손절폭(${(risk / entry * 100).toFixed(1)}%)이 커서 ${p.lev}배면 손절 전에 청산될 수 있어 ${p.useLev}배로 계산했어요.</span>` : `${p.lev}배여도 손절이 청산보다 먼저 와요.`}</p>`;
+    <ol class="flow">
+      <li${done(t && t.state === "open")}><b>1️⃣ ${fmt0(entry)}에 ${side} 진입</b> · ${p.useLev}배 · <b>${usd(p.first.margin)}</b> (시드의 ${(p.first.margin / seed * 100).toFixed(1)}%, ${p.first.btc.toFixed(4)} BTC)</li>
+      <li${done(added)}><b>2️⃣ ${fmt0(addPx)}까지 ${go} (돈 버는 중)</b> · <b>${usd(p.add.margin)}</b> 더 넣기 (시드의 ${(p.add.margin / seed * 100).toFixed(1)}%)
+        <br><span class="muted">→ 손절을 ${fmt0(entry)}(처음 진입가)로 ${d === 1 ? "올리기" : "내리기"}</span></li>
+      <li${done(tookTp)}><b>3️⃣ RSI가 ${d === 1 ? "70 위" : "30 밑"}으로 마감하면</b> · 들고 있는 것의 <b>30%</b> 팔아서 수익 챙기기
+        <br><span class="muted">가격이 아니라 RSI(0~100 점수, ${d === 1 ? "70 넘으면 과열" : "30 밑이면 너무 빠짐"})로 정해져서 2️⃣보다 먼저 올 수도 있어요</span></li>
+      <li><b>4️⃣ 나머지</b>는 손절선이 따라오다 닿으면 끝</li>
+      ${now}
+    </ol>
+    <p class="loss">❌ 반대로 <b>${fmt0(stop0)}</b>까지 ${back} 손절 → <b class="bad">${usd(loss1)}</b> (${pc(loss1)}) · 2️⃣까지 한 뒤라면 ${fmt0(entry)}에서 손절 → <b class="bad">${usd(lossAfter)}</b> (${pc(lossAfter)})</p>
+    <p class="note">💰 참고 (목표가 아님): 2️⃣까지 하고 가격이 여기까지 ${go} ${ex}</p>
+    <p class="note">${p.useLev}배 강제 청산 가격은 ${fmt0(liqPx)}이에요. ${p.useLev < p.lev
+      ? `<span class="bad">이번 신호는 손절폭(${(risk / entry * 100).toFixed(1)}%)이 커서 ${p.lev}배면 손절 전에 청산될 수 있어 ${p.useLev}배로 계산했어요.</span>`
+      : `${p.lev}배여도 손절이 청산보다 먼저 와요.`}</p>`;
 }
 
 function whyText(ind, k, d) {
@@ -1026,8 +1035,8 @@ function drawChart(s) {
       const dash = window.LightweightCharts.LineStyle.Dashed;
       const useLev = orderPlan(cur.entry, cur.risk / cur.entry).useLev;
       const liqPx = cur.entry * (1 - cur.d * (1 / useLev - MMR));
-      const items = [[cur.stop, short, "손절"], [cur.entry, tokenColor("--muted"), "진입"], [liqPx, tokenColor("--wait"), `강제 청산 ${useLev}배`]];
-      if (!cur.added) items.push([cur.addPx, tokenColor("--accent"), "추가 진입"]);
+      const items = [[cur.stop, short, "❌ 손절"], [cur.entry, tokenColor("--muted"), "1️⃣ 진입"], [liqPx, tokenColor("--wait"), `강제 청산 ${useLev}배`]];
+      if (!cur.added) items.push([cur.addPx, tokenColor("--accent"), "2️⃣ 추가 진입 (수익 중)"]);
       for (const [price, color, title] of items) c.lines.push(c.candles.createPriceLine({ price, color, title, lineWidth: 1, lineStyle: dash, axisLabelVisible: true }));
     }
     c.focusKey = key;

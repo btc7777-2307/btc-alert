@@ -180,26 +180,29 @@ def why_lines(ind, k, d):
 
 
 def order_summary(e, d, risk, atr):
-    """메시지 맨 아래 주문 정리: 진입 · 손절 · 추가 진입 · 수익 예시."""
+    """메시지 맨 아래: 순서대로 할 일 (진입 → 추가 → 30% 익절 → 나머지) + 손절."""
     p = plan(e, risk)
     seed, stop, add = p["seed"], e - d * risk, e + d * risk
-    loss = pnl(e, add, d, risk, stop, False)
+    go = "오르면" if d == 1 else "내려가면"
+    back = "내려가면" if d == 1 else "오르면"
+    side = "롱" if d == 1 else "숏"
+    loss1, loss2 = pnl(e, add, d, risk, stop, False), pnl(e, add, d, risk, e, True)
     lines = [
-        f"━━ 주문 정리 (시드 {usd(seed)} = {p['seed_krw']:,.0f}원) ━━",
-        f"① 진입 {fmt(e)} · {p['use_lev']:g}배 · {usd(p['m1'])} 넣기 (시드의 {p['m1'] / seed * 100:.1f}%)",
-        f"✋ 손절 {fmt(stop)} · 손절되면 {usd(loss)} ({pct_of(loss, seed)})",
-        f"② 추가 진입 {fmt(add)} · {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
-        f"   → 이때 손절을 {fmt(e)}(처음 진입가)로 옮기기 · 그 뒤 손절되면 {usd(pnl(e, add, d, risk, e, True))} (처음 진입분은 본전, 추가분만 손해)",
-        f"💵 익절: 4시간봉이 RSI {'70 이상' if d == 1 else '30 이하'}로 마감하면 들고 있는 물량의 30% 팔기",
-        f"   (RSI = 최근 14개 봉의 오른 힘÷내린 힘 점수, {'70 넘으면 과열' if d == 1 else '30 밑이면 너무 빠짐'}) · 나머지 70%는 손절선이 따라가다 닿으면 끝",
-        "💰 참고: 가격이 이만큼 가면 (익절 목표 아님, 손절선이 따라가며 지켜 줘요)",
+        f"━━ 이렇게 하세요 (시드 {usd(seed)} = {p['seed_krw']:,.0f}원) ━━",
+        f"1️⃣ 지금 {fmt(e)}에 {side} 진입 · {p['use_lev']:g}배 · {usd(p['m1'])} (시드의 {p['m1'] / seed * 100:.1f}%)",
+        f"2️⃣ {fmt(add)}까지 {go} (돈 버는 중) · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
+        f"    → 손절을 {fmt(e)}(처음 진입가)로 {'올리기' if d == 1 else '내리기'}",
+        f"3️⃣ RSI가 {'70 위' if d == 1 else '30 밑'}으로 마감하면 · 들고 있는 것의 30% 팔아서 수익 챙기기",
+        "    (가격이 아니라 RSI로 정해져서 2️⃣보다 먼저 올 수도 있어요. 오면 알림이 가요)",
+        "4️⃣ 나머지는 손절선이 따라오다 닿으면 끝 (알림이 가요)",
+        "",
+        f"❌ 반대로 {fmt(stop)}까지 {back} 손절 → {usd(loss1)} ({pct_of(loss1, seed)})",
+        f"    2️⃣까지 한 뒤라면 {fmt(e)}에서 손절 → {usd(loss2)} ({pct_of(loss2, seed)})",
+        "",
+        f"💰 참고 (목표가 아님): 2️⃣까지 하고 가격이 여기까지 {go}",
     ]
-    for k in (2, 3, 5):
-        px = e + d * k * risk
-        money = pnl(e, add, d, risk, px, True)
-        lines.append(f"   {fmt(px)} → {usd(money, True)} ({pct_of(money, seed)})")
-    lines.append("가격 목표는 따로 없어요. 남은 물량은 손절선이 따라오다 닿으면 끝나요.")
-    lines.append(f"(손절폭 = ATR×2 = 최근 4시간 평균 움직임 {fmt(atr)}달러의 2배)")
+    lines.append("    " + " · ".join(f"{fmt(e + d * k * risk)} → {usd(pnl(e, add, d, risk, e + d * k * risk, True), True)}" for k in (2, 3, 5)))
+    lines.append(f"(손절폭 = ATR×2 = 최근 4시간 평균 움직임 {fmt(atr)}달러의 2배 · RSI = 0~100 점수, {'70 넘으면 과열' if d == 1 else '30 밑이면 너무 빠짐'})")
     if p["use_lev"] < p["lev"]:
         lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산될 수 있어서 {p['use_lev']:g}배로 계산했어요")
     return lines
@@ -226,7 +229,7 @@ def event_message(ind, t, kind, m, px):
     if kind == "add":
         p = plan(e, risk)
         return "\n".join([
-            f"📈 {side} 추가 진입 · {fmt(px)} 도달",
+            f"📈 {side} 2️⃣ 추가 진입 · {fmt(px)} 도달 (돈 버는 중)",
             f"② {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
             f"✋ 손절을 {fmt(e)}(처음 진입가)로 옮기세요 → 그 뒤 손절되면 {usd(pnl(e, t['add_px'], d, risk, e, True))} (추가분만 손해)",
         ])
@@ -234,7 +237,7 @@ def event_message(ind, t, kind, m, px):
         rsi = ind["rsi"][m]
         got = t["realized"] * settings()[0] * settings()[1]
         return "\n".join([
-            f"💵 {side} 30% 익절 · {fmt(px)}",
+            f"💵 {side} 3️⃣ 30% 익절 · {fmt(px)}",
             f"RSI {rsi:.0f} ({'과열' if d == 1 else '너무 빠짐'}) → 들고 있는 물량의 30% 팔기 · {usd(got, True)} 확정",
             f"손절은 {fmt(e)}(처음 진입가) 이상으로 · 나머지 70%는 손절선이 따라가요",
         ])

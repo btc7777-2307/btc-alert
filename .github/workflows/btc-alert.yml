@@ -29,5 +29,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -f state.json ] || exit 0
           git add state.json
           git diff --cached --quiet || (git commit -m "알림 기록 갱신" && git push)

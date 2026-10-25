@@ -129,6 +129,10 @@ def event_message(style, tf, d, ev, lv, sig_ms, ev_ms):
 
 
 def main():
+    if os.environ.get("GITHUB_ACTIONS") and not os.environ.get("TELEGRAM_TOKEN"):
+        # 토큰 등록 전에는 아무것도 기록하지 않는다 (안 보낸 알림을 보냈다고 남기지 않도록)
+        print("TELEGRAM_TOKEN이 아직 등록되지 않아 건너뜁니다.")
+        return
     st = load_state()
     now_ms = time.time() * 1000
     cache = {tf: bs.candles(tf, n) for tf, n in CANDLES.items()}

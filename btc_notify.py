@@ -47,16 +47,27 @@ def telegram(method, **params):
     return d["result"]
 
 
+_chat = {}
+
+
 def find_chat_id():
-    # 공개 저장소에 남지 않도록 채팅 id는 state.json에 저장하지 않는다
+    # 공개 저장소에 남지 않도록 채팅 id는 state.json이나 실행 기록에 남기지 않는다
     cid = os.environ.get("TELEGRAM_CHAT_ID")
     if cid:
         return cid
-    updates = telegram("getUpdates")
-    chats = [u["message"]["chat"]["id"] for u in updates if "message" in u]
-    if not chats:
-        sys.exit("받을 채팅을 못 찾았습니다. TELEGRAM_CHAT_ID를 등록하거나, 내 봇에게 아무 메시지나 보낸 뒤 다시 실행하세요.")
-    return chats[-1]
+    if "id" not in _chat:
+        # 봇에서 '시작'을 누른 지 24시간 안이면 텔레그램이 그 대화를 알려 준다
+        updates = telegram("getUpdates")
+        chats = [u["message"]["chat"]["id"] for u in updates if "message" in u]
+        if not chats:
+            sys.exit("받을 채팅을 못 찾았습니다. 텔레그램에서 내 봇에게 아무 메시지나 보낸 뒤 다시 실행하세요.")
+        _chat["id"] = chats[-1]
+        # 처음 한 번은 채팅 번호를 텔레그램으로 알려 줘서 GitHub에 등록하게 한다
+        telegram("sendMessage", chat_id=_chat["id"], text=(
+            f"내 채팅 번호: {_chat['id']}\n"
+            "이 숫자를 GitHub 저장소 Settings → Secrets and variables → Actions에 "
+            "TELEGRAM_CHAT_ID라는 이름으로 등록하세요. 등록하지 않으면 24시간 뒤부터 알림이 멈춥니다."))
+    return _chat["id"]
 
 
 def send(st, text):

@@ -212,7 +212,7 @@ def signal_message(ind, t):
     k, d, e = t["sig_k"], t["d"], t["entry"]
     a = ind["atr"][k]
     return "\n".join([
-        f"{'🟢 롱' if d == 1 else '🔴 숏'} 신호 · 4시간봉",
+        f"{'🟢' if d == 1 else '🔴'} 1️⃣ {'롱' if d == 1 else '숏'} 진입 신호 · 4시간봉",
         "",
         "왜?",
         *why_lines(ind, k, d),
@@ -244,13 +244,13 @@ def event_message(ind, t, kind, m, px):
     if kind == "trail":
         money = money_at(t, px)
         return "\n".join([
-            f"🔒 {side} 손절 옮기기 → {fmt(px)}",
+            f"🔒 {side} 손절 옮기기 → {fmt(px)} (손절 주문 가격을 바꿔 주세요)",
             f"여기서 끝나도 {usd(money, True)} ({pct_of(money, seed)})",
         ])
     if kind == "exit":
         money = money_at(t, px)
         return "\n".join([
-            f"{'✅' if money > 0 else '❌'} {side} 끝 · {fmt(px)}에서 정리",
+            f"{'✅' if money > 0 else '❌'} 4️⃣ {side} 끝 · {fmt(px)}에서 손절선에 닿아 정리",
             f"결과 {usd(money, True)} ({pct_of(money, seed)}) · {'추가 진입 포함' if t.get('added') else '①만 진입'}{' · 30% 익절 포함' if t.get('tp') else ''} · 4시간봉 {m - t['entry_k'] + 1}개 동안",
         ])
     return ""

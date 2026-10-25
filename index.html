@@ -695,7 +695,16 @@ let drawings = {};
 try { drawings = JSON.parse(localStorage.getItem("btc-dash-drawings") || "{}"); } catch (e) {}
 // 예전(카드별) 저장분은 그 카드의 신호 봉으로 옮김
 for (const st of STYLES) if (Array.isArray(drawings[st.key])) { drawings[`${st.key}|${st.tf}`] = drawings[st.key]; delete drawings[st.key]; }
-const dkey = s => `${s.key}|${(charts[s.key] && charts[s.key].tf) || s.tf}`;
+// 그린 선은 종목(BTCUSDT) 하나에 한 목록: 어느 카드·어느 봉에서 그려도 모든 봉에 보인다 (TradingView처럼)
+const ALL = "all";
+const dkey = () => ALL;
+function mergeInto(target, list) {
+  for (const d of list || []) {
+    if (d.preset && target.some(x => x.preset === d.preset)) continue;  // 같은 미리 그린 채널은 하나만
+    if (d.id && target.some(x => x.id === d.id)) continue;
+    target.push(d);
+  }
+}
 // 화면 사진에서 잰 값: 평행선 11개, 간격 10,792달러, 하루 -19.8달러 기울기 (오차 수백 달러)
 const SAFARI_FIB = {
   type: "fib", preset: "safari-1d",
@@ -706,10 +715,7 @@ const SAFARI_FIB = {
 let presetDone = false;
 try { presetDone = localStorage.getItem("btc-dash-preset") === "safari-1d"; } catch (e) {}
 if (!presetDone) {
-  for (const st of STYLES) for (const tf of ["1D", "3D"]) {
-    const k = `${st.key}|${tf}`;
-    if (!(drawings[k] || []).some(d => d.preset === "safari-1d")) (drawings[k] = drawings[k] || []).push(JSON.parse(JSON.stringify(SAFARI_FIB)));
-  }
+  mergeInto(drawings[ALL] = drawings[ALL] || [], [JSON.parse(JSON.stringify(SAFARI_FIB))]);
   try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); localStorage.setItem("btc-dash-preset", "safari-1d"); } catch (e) {}
 }
 // ----- 기기 간 동기화 -----
@@ -717,6 +723,14 @@ if (!presetDone) {
 // 카드·봉 묶음마다 마지막으로 고친 시각을 두고, 더 최근 것을 따른다.
 let drawMeta = {}, dragActive = false;
 try { drawMeta = JSON.parse(localStorage.getItem("btc-dash-drawmeta") || "{}"); } catch (e) {}
+// 예전에 카드·봉마다 따로 저장한 선을 하나로 합침
+if (Object.keys(drawings).some(k => k !== ALL)) {
+  const all = drawings[ALL] || [];
+  let u = drawMeta[ALL] || 0;
+  for (const k of Object.keys(drawings)) if (k !== ALL) { mergeInto(all, drawings[k]); u = Math.max(u, drawMeta[k] || 0); }
+  drawings = { [ALL]: all }; drawMeta = { [ALL]: u };
+  try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); localStorage.setItem("btc-dash-drawmeta", JSON.stringify(drawMeta)); } catch (e) {}
+}
 const saveLocal = () => {
   try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); localStorage.setItem("btc-dash-drawmeta", JSON.stringify(drawMeta)); } catch (e) {}
 };
@@ -748,23 +762,33 @@ async function cloudPull() {
   try {
     const keys = await cloudCall("getKeys");
     if (!keys) return;
-    const counts = keys.filter(k => k.startsWith("dw_") && k.endsWith("_n"));
+    const counts = keys.filter(k => k.startsWith("dw_") && k.endsWith("_n"))
+                       .sort((a, b) => (b === "dw_all_n") - (a === "dw_all_n"));  // 합친 목록 먼저
     const nvals = counts.length ? (await cloudCall("getItems", counts)) || {} : {};
     const want = [];
     for (const nk of counts) for (let i = 0; i < (+nvals[nk] || 0); i++) want.push(`${nk.slice(0, -2)}_${i}`);
     const vals = want.length ? (await cloudCall("getItems", want)) || {} : {};
     const seen = new Set();
-    let changed = false;
+    let changed = false, migrated = false;
     for (const nk of counts) {
       let body = "";
       for (let i = 0; i < (+nvals[nk] || 0); i++) body += vals[`${nk.slice(0, -2)}_${i}`] || "";
       let rec; try { rec = JSON.parse(body); } catch (e) { continue; }
+      if (rec.k !== ALL) {
+        // 예전 형식(카드·봉별): 합친 목록에 넣고 클라우드에서 지움
+        mergeInto(drawings[ALL] = drawings[ALL] || [], rec.list);
+        const old = [nk]; for (let i = 0; i < (+nvals[nk] || 0); i++) old.push(`${nk.slice(0, -2)}_${i}`);
+        cloudCall("removeItems", old);
+        drawMeta[ALL] = Date.now(); migrated = true; changed = true;
+        continue;
+      }
       seen.add(rec.k);
       if ((rec.u || 0) > (drawMeta[rec.k] || 0)) {
         if (dragActive) continue;
         drawings[rec.k] = rec.list || []; drawMeta[rec.k] = rec.u; changed = true;
       } else if ((drawMeta[rec.k] || 0) > (rec.u || 0)) cloudPush(rec.k);
     }
+    if (migrated) cloudPush(ALL);
     // 아직 클라우드에 없는 이 기기의 선은 올림
     for (const k of Object.keys(drawings)) if (!seen.has(k) && (drawings[k] || []).length) { drawMeta[k] = drawMeta[k] || 1; cloudPush(k); }
     if (changed) {
@@ -1005,7 +1029,7 @@ function ptAt(c, x, y) {
 }
 
 // 그림 하나를 화면 좌표의 선·칠·글자·조절점으로
-function geometry(c, d, W) {
+function geometry(c, d, W, H) {
   const P = d.pts.map(q => ({ x: xOf(c, q.t), y: yOf(c, q.p) }));
   if (!P.length || P.some(q => q.x === null || q.y === null)) return null;
   const g = { segs: [], fills: [], labels: [], handles: P.map((q, i) => ({ x: q.x, y: q.y, i })) };
@@ -1040,6 +1064,13 @@ function geometry(c, d, W) {
       const nx = rows[i + 1];
       if (nx) g.fills.push({ pts: [[0, r.yL], [W, r.yR], [W, nx.yR], [0, nx.yL]], color: withAlpha(nx.color, 0.1) });
     });
+    if (H) {
+      // 화면 밖에 있는 가장 가까운 위·아래 레벨을 차트 위아래 끝에 표시 (분봉처럼 가격 범위가 좁을 때)
+      const above = rows.filter(r => r.yR < 0).sort((a, b) => b.yR - a.yR)[0];
+      const below = rows.filter(r => r.yR > H).sort((a, b) => a.yR - b.yR)[0];
+      if (above) g.labels.push({ x: 8, y: 16, text: `↑ 피보나치 ${above.lv} (${fmt0(above.pR)})`, color: above.color, align: "left" });
+      if (below) g.labels.push({ x: 8, y: H - 8, text: `↓ 피보나치 ${below.lv} (${fmt0(below.pR)})`, color: below.color, align: "left" });
+    }
   }
   return g;
 }
@@ -1049,7 +1080,7 @@ function paintLayer(s, c, ctx, W, H, background) {
   if (c.tool && c.hover) list.push({ id: "_temp", type: c.tool, pts: [...c.pts, c.hover] });
   const panel = tokenColor("--panel"), font = tokenColor("--font-num");
   for (const d of list) {
-    const g = geometry(c, d, W);
+    const g = geometry(c, d, W, H);
     if (!g) continue;
     if (background) {
       for (const f of g.fills) {

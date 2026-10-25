@@ -102,7 +102,25 @@ def kst(ts_ms, fmt="%m/%d %H:%M"):
     return time.strftime(fmt, time.gmtime(ts_ms / 1000 + KST))
 
 
-def signal_message(style, tf, kind, why, d, ind, k, now_ms):
+def signal_reason(kind, d, ind, k, htf, ht):
+    """신호가 나온 이유를 한 줄로."""
+    rsi = ind["rsi"][k]
+    vol = ind["v"][k] / ind["vavg"][k] if ind["vavg"][k] else 0
+    if kind.startswith("추세"):
+        main = (f"상승 추세 중 EMA20까지 눌렸다가 다시 오름" if d == 1
+                else f"하락 추세 중 EMA20까지 반등했다가 다시 꺾임")
+    elif "돌파" in kind:
+        main = f"20봉 고점 {max(ind['h'][k - 20:k]):,.0f}을 거래량 {vol:.1f}배로 뚫음"
+    elif "이탈" in kind:
+        main = f"20봉 저점 {min(ind['l'][k - 20:k]):,.0f}을 거래량 {vol:.1f}배로 깨짐"
+    elif d == 1:
+        main = "횡보 중 볼린저 하단 밖으로 빠졌다가 안으로 복귀 (과매도 반등)"
+    else:
+        main = "횡보 중 볼린저 상단 밖으로 나갔다가 안으로 복귀 (과매수 반락)"
+    return f"{main} · 상위 {TF_KO[htf]} {NAMES[ht]}, RSI {rsi:.0f}"
+
+
+def signal_message(style, tf, htf, ht, kind, d, ind, k, now_ms):
     e, s, t1, t2 = bs.levels(ind, k, d)
     stop_pct = abs(e - s) / e
     close_ms = ind["ts"][k] + bs.TF_MS[tf]
@@ -112,14 +130,13 @@ def signal_message(style, tf, kind, why, d, ind, k, now_ms):
         ok = stop_pct < bs.liq_distance(lev) * 0.8
         lev_lines.append(f"{lev}배 {'안전' if ok else '손절 전 청산 위험'}")
     return "\n".join([
-        f"{'🟢' if d == 1 else '🔴'} {style}({TF_KO[tf]}) {'롱' if d == 1 else '숏'} 신호",
-        kind,
+        f"{'🟢' if d == 1 else '🔴'} {style}({TF_KO[tf]}) {'롱' if d == 1 else '숏'} 신호 · {kind}",
+        f"이유: {signal_reason(kind, d, ind, k, htf, ht)}",
         f"진입 {e:,.1f}",
         f"손절 {s:,.1f} ({stop_pct * 100:.2f}%)",
         f"1차 익절 {t1:,.1f} · 2차 익절 {t2:,.1f}",
         " · ".join(lev_lines),
         f"봉 마감 {kst(close_ms)} · {delay_min:.0f}분 지연",
-        f"근거: {why}",
         "※ 참고용. 백테스트에서 손실이었던 규칙입니다.",
     ])
 
@@ -250,11 +267,11 @@ def main():
             close_ms = ind["ts"][k] + bs.TF_MS[tf]
             if now_ms - close_ms > LOOKBACK_MS[tf]:
                 continue
-            j = hmap[k]
-            d, kind, why = bs.signal_at(ind, k, bs.trend(hind, j) if j is not None and j >= 200 else 0)
+            ht_k = htf_trend_at(hind, hmap, k)
+            d, kind, why = bs.signal_at(ind, k, ht_k)
             key = f"{style}|{ind['ts'][k]}"
             if d and key not in st["sent"]:
-                send(st, signal_message(style, tf, kind, why, d, ind, k, now_ms))
+                send(st, signal_message(style, tf, htf, ht_k, kind, d, ind, k, now_ms))
                 st["sent"].append(key)
                 sent_any = True
 

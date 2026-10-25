@@ -105,6 +105,7 @@ tr:last-child td { border-bottom: 0; }
 .tf-tabs button.sig::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--wait); }
 .chart-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 14px 0; }
 .chart-tools button { font-size: 12px; padding: 4px 10px; }
+.sync-note { font-size: 11px; color: var(--muted); }
 .chart-tools button.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .tool-hint { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3; max-width: calc(100% - 90px); text-align: center;
   font-size: 12px; color: var(--panel); background: var(--accent); padding: 4px 10px; border-radius: 6px; pointer-events: none; }
@@ -471,7 +472,7 @@ function compute(withBacktest) {
         logItems.unshift({ style: s.key, ts: ind.ts[i], at: ind.ts[i] + TF_MS[s.tf], d, kind, price: ind.c[i] });
         logItems = logItems.slice(0, 50);
         try { localStorage.setItem("btc-dash-log", JSON.stringify(logItems)); } catch (e) {}
-        if (!state.firstRun) alertSignal(s, d, kind, ind.c[i]);
+        if (!state.firstRun) alertSignal(s, d, kind, ind.c[i], why);
       }
     }
   }
@@ -498,10 +499,10 @@ function tone(freq, delay = 0, dur = 0.3) {
 function alarm(d, seconds = 5, delay = 0) {
   for (let t = 0; t < seconds; t += 0.5) beep(d, delay + t);
 }
-function alertSignal(s, d, kind, price) {
+function alertSignal(s, d, kind, price, why) {
   alarm(d, 5);
   if ("Notification" in window && Notification.permission === "granted") {
-    try { new Notification(`${s.name}(${s.tfName}) ${d === 1 ? "롱" : "숏"} 신호`, { body: `${kind} · ${fmt(price)}` }); } catch (e) {}
+    try { new Notification(`${s.name}(${s.tfName}) ${d === 1 ? "롱" : "숏"} 신호`, { body: `${kind} · ${fmt(price)}${why ? "\n이유: " + why : ""}` }); } catch (e) {}
   }
 }
 // 익절은 올라가는 '띵-동'을, 손절은 낮고 긴 '부-'를 5초 동안 반복
@@ -583,6 +584,7 @@ function cardSkeleton(s) {
       <button type="button" data-tool="fib">피보나치 채널</button>
       <button type="button" data-tool="undo">되돌리기</button>
       <button type="button" data-tool="clear">모두 지우기</button>
+      <span class="sync-note">${cloud ? "그린 선: 텔레그램 기기끼리 동기화" : "그린 선: 이 기기에만 저장 (텔레그램에서 열면 동기화)"}</span>
     </div>
     <div class="chart-legend num" data-legend><span class="lg-e20">EMA20</span><span class="lg-e50">EMA50</span><span class="lg-bb">볼린저(20,2)</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted ohlc" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
     <div class="chart-wrap"><div class="chart" data-chart></div><button type="button" class="chart-reset" data-reset>차트 초기화</button><div class="tool-hint" data-hint></div>
@@ -710,7 +712,72 @@ if (!presetDone) {
   }
   try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); localStorage.setItem("btc-dash-preset", "safari-1d"); } catch (e) {}
 }
-const saveDrawings = () => { try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); } catch (e) {} };
+// ----- 기기 간 동기화 -----
+// 텔레그램 안에서 열면 텔레그램 클라우드 저장소(같은 계정의 모든 기기에서 공유)에 함께 저장한다.
+// 카드·봉 묶음마다 마지막으로 고친 시각을 두고, 더 최근 것을 따른다.
+let drawMeta = {}, dragActive = false;
+try { drawMeta = JSON.parse(localStorage.getItem("btc-dash-drawmeta") || "{}"); } catch (e) {}
+const saveLocal = () => {
+  try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); localStorage.setItem("btc-dash-drawmeta", JSON.stringify(drawMeta)); } catch (e) {}
+};
+function saveDrawings(key) {
+  if (key) { drawMeta[key] = Date.now(); cloudPush(key); }
+  saveLocal();
+}
+const cloud = (() => {
+  try {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    return tg && tg.initData && tg.CloudStorage && (!tg.isVersionAtLeast || tg.isVersionAtLeast("6.9")) ? tg.CloudStorage : null;
+  } catch (e) { return null; }
+})();
+const cloudCall = (fn, ...args) => new Promise(res => { try { cloud[fn](...args, (err, val) => res(err ? null : val)); } catch (e) { res(null); } });
+const ckey = key => "dw_" + key.replace(/[^A-Za-z0-9]/g, "_");  // "swing|1D" → "dw_swing_1D"
+const CHUNK = 3800;  // 텔레그램 저장소 값 하나는 4096자까지라 나눠 저장
+async function cloudPush(key) {
+  if (!cloud) return;
+  const body = JSON.stringify({ k: key, u: drawMeta[key] || 0, list: drawings[key] || [] }), base = ckey(key);
+  const parts = [];
+  for (let i = 0; i < body.length; i += CHUNK) parts.push(body.slice(i, i + CHUNK));
+  for (let i = 0; i < parts.length; i++) await cloudCall("setItem", `${base}_${i}`, parts[i]);
+  await cloudCall("setItem", `${base}_n`, String(parts.length));
+}
+let pulling = false;
+async function cloudPull() {
+  if (!cloud || pulling) return;
+  pulling = true;
+  try {
+    const keys = await cloudCall("getKeys");
+    if (!keys) return;
+    const counts = keys.filter(k => k.startsWith("dw_") && k.endsWith("_n"));
+    const nvals = counts.length ? (await cloudCall("getItems", counts)) || {} : {};
+    const want = [];
+    for (const nk of counts) for (let i = 0; i < (+nvals[nk] || 0); i++) want.push(`${nk.slice(0, -2)}_${i}`);
+    const vals = want.length ? (await cloudCall("getItems", want)) || {} : {};
+    const seen = new Set();
+    let changed = false;
+    for (const nk of counts) {
+      let body = "";
+      for (let i = 0; i < (+nvals[nk] || 0); i++) body += vals[`${nk.slice(0, -2)}_${i}`] || "";
+      let rec; try { rec = JSON.parse(body); } catch (e) { continue; }
+      seen.add(rec.k);
+      if ((rec.u || 0) > (drawMeta[rec.k] || 0)) {
+        if (dragActive) continue;
+        drawings[rec.k] = rec.list || []; drawMeta[rec.k] = rec.u; changed = true;
+      } else if ((drawMeta[rec.k] || 0) > (rec.u || 0)) cloudPush(rec.k);
+    }
+    // 아직 클라우드에 없는 이 기기의 선은 올림
+    for (const k of Object.keys(drawings)) if (!seen.has(k) && (drawings[k] || []).length) { drawMeta[k] = drawMeta[k] || 1; cloudPush(k); }
+    if (changed) {
+      for (const list of Object.values(drawings)) for (const d of list) if (!d.id) d.id = newId();
+      saveLocal();
+      for (const s of STYLES) {
+        const c = charts[s.key];
+        if (c && c.selected && !(drawings[dkey(s)] || []).some(d => d.id === c.selected)) select(s, null);
+        renderDrawings(s);
+      }
+    }
+  } finally { pulling = false; }
+}
 
 function makeChart(s) {
   const card = $("card-" + s.key), box = card.querySelector("[data-chart]");
@@ -1066,7 +1133,7 @@ function deleteSelected(s) {
   const c = charts[s.key], list = drawings[dkey(s)] || [];
   const i = list.findIndex(d => d.id === c.selected);
   if (i < 0 || list[i].locked) return;
-  list.splice(i, 1); saveDrawings(); select(s, null);
+  list.splice(i, 1); saveDrawings(dkey(s)); select(s, null);
 }
 
 function bindDrawing(s, c, box) {
@@ -1087,6 +1154,7 @@ function bindDrawing(s, c, box) {
     const start = ptAt(c, x, y);
     if (!start) return;
     drag = { d: hit.d, handle: hit.handle, start, orig: hit.d.pts.map(q => ({ ...q })) };
+    dragActive = true;
     c.chart.applyOptions({ handleScroll: false, handleScale: false });
     try { box.setPointerCapture(e.pointerId); } catch (err) {}
   }, true);
@@ -1100,7 +1168,7 @@ function bindDrawing(s, c, box) {
     else { const dt = q.t - drag.start.t, dp = q.p - drag.start.p; d.pts = drag.orig.map(o => ({ t: o.t + dt, p: o.p + dp })); }
     renderDrawings(s);
   }, true);
-  const end = () => { if (drag) { drag = null; saveDrawings(); restore(); } };
+  const end = () => { if (drag) { drag = null; dragActive = false; saveDrawings(dkey(s)); restore(); } };
   box.addEventListener("pointerup", end, true);
   box.addEventListener("pointercancel", end, true);
   // 같은 누름이 차트 이동으로 이어지지 않게
@@ -1110,7 +1178,7 @@ function bindDrawing(s, c, box) {
   bar.querySelector('[data-act="lock"]').addEventListener("click", () => {
     const d = (drawings[dkey(s)] || []).find(x => x.id === c.selected);
     if (!d) return;
-    d.locked = !d.locked; saveDrawings(); select(s, d.id);
+    d.locked = !d.locked; saveDrawings(dkey(s)); select(s, d.id);
   });
   bar.querySelector('[data-act="del"]').addEventListener("click", () => deleteSelected(s));
   bar.querySelector('[data-act="close"]').addEventListener("click", () => select(s, null));
@@ -1134,12 +1202,12 @@ function onToolButton(s, btn) {
   const list = drawings[dkey(s)] || [];
   if (tool === "undo") {
     for (let i = list.length - 1; i >= 0; i--) if (!list[i].locked) { list.splice(i, 1); break; }
-    saveDrawings(); select(s, null); return;
+    saveDrawings(dkey(s)); select(s, null); return;
   }
   if (tool === "clear") {
     // 실수로 지우지 않게 한 번 더 누를 때만, 잠긴 선은 남김
     if (btn.dataset.armed) {
-      drawings[dkey(s)] = list.filter(d => d.locked); saveDrawings(); select(s, null);
+      drawings[dkey(s)] = list.filter(d => d.locked); saveDrawings(dkey(s)); select(s, null);
       delete btn.dataset.armed; btn.textContent = "모두 지우기"; return;
     }
     btn.dataset.armed = "1"; btn.textContent = "한 번 더 누르면 지움 (잠긴 선 제외)";
@@ -1159,7 +1227,7 @@ function onChartClick(s, p) {
   }
   const d = { id: newId(), type: c.tool, pts: c.pts };
   (drawings[dkey(s)] = drawings[dkey(s)] || []).push(d);
-  saveDrawings(); setTool(s, null); select(s, d.id);
+  saveDrawings(dkey(s)); setTool(s, null); select(s, d.id);
 }
 
 // ===== 실시간 시세 (비트겟 웹소켓) =====
@@ -1308,6 +1376,8 @@ async function init() {
     setStatus("err", "불러오기 실패: " + e.message);
   }
   setInterval(refresh, REFRESH_MS);
+  cloudPull(); setInterval(cloudPull, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) cloudPull(); });
   setInterval(tickCountdown, 1000);
   // 2단계: 백테스트용 과거 데이터
   const failed = [];

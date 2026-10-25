@@ -102,7 +102,7 @@ def signal_message(style, tf, kind, why, d, ind, k, now_ms):
         ok = stop_pct < bs.liq_distance(lev) * 0.8
         lev_lines.append(f"{lev}배 {'안전' if ok else '손절 전 청산 위험'}")
     return "\n".join([
-        f"{'🟢' if d == 1 else '🔴'} {style} {'롱' if d == 1 else '숏'} 신호 ({tf})",
+        f"{'🟢' if d == 1 else '🔴'} {style}({TF_KO[tf]}) {'롱' if d == 1 else '숏'} 신호",
         kind,
         f"진입 {e:,.1f}",
         f"손절 {s:,.1f} ({stop_pct * 100:.2f}%)",
@@ -137,17 +137,70 @@ def trade_path(ind, k, d, lv, end):
     return ev
 
 
-def event_message(style, tf, d, ev, lv, sig_ms, ev_ms):
+TF_KO = {"5m": "5분봉", "15m": "15분봉", "1H": "1시간봉", "4H": "4시간봉", "1D": "일봉"}
+
+
+def htf_trend_at(hind, hmap, k):
+    j = hmap[k]
+    return bs.trend(hind, j) if j is not None and j >= 200 else 0
+
+
+def stop_reasons(ind, hind, hmap, htf, k, m, d, lv):
+    """손절된 이유를 차트 상태로 추정해 최대 3줄. 원인을 확정하는 것은 아니다."""
+    entry, stop = lv[0], lv[1]
+    out = []
+    t0, t1 = htf_trend_at(hind, hmap, k), htf_trend_at(hind, hmap, m)
+    if t1 != t0:
+        out.append(f"상위 {TF_KO[htf]} 추세가 {NAMES[t0]}에서 {NAMES[t1]}(으)로 바뀜")
+    c = ind["c"][m]
+    if (c - ind["e50"][m]) * d < 0:
+        out.append(f"가격이 EMA50을 {'넘어 올라가' if d == -1 else '깨고 내려가'} 추세가 꺾임")
+    elif (c - ind["e20"][m]) * d < 0:
+        out.append(f"가격이 EMA20 {'위로 올라와 반등' if d == -1 else '아래로 내려와 하락'} 힘이 셌음")
+    stop_pct = abs(entry - stop) / entry
+    if stop_pct < 0.002:
+        out.append(f"손절폭이 {stop_pct * 100:.2f}%로 좁아 작은 흔들림에도 걸림")
+    if m - k <= 2:
+        out.append(f"신호 후 {m - k}봉 만에 되돌아옴 (가짜 {'이탈' if d == -1 else '돌파'} 가능성)")
+    if any((ind["c"][n] - ind["o"][n]) * d < 0 and ind["v"][n] > 1.5 * ind["vavg"][n] for n in range(k + 1, m + 1)):
+        out.append(f"거래량이 실린 {'양봉' if d == -1 else '음봉'}이 나와 반대로 밀림")
+    return out[:4] or ["뚜렷한 신호 없이 반대 방향으로 움직임"]
+
+
+def event_message(style, tf, d, ev, lv, sig_ms, ev_ms, bars, reasons=()):
     entry, stop, t1, t2 = lv
     price = {"stop": stop, "t1": t1, "t2": t2}[ev]
     move = (price - entry) / entry * 100 * d
-    return "\n".join([
-        f"{'❌' if ev == 'stop' else '💰'} {style} {'롱' if d == 1 else '숏'} · {EV_NAME[ev]}",
+    lines = [
+        f"{'❌' if ev == 'stop' else '💰'} {style}({TF_KO[tf]}) {'롱' if d == 1 else '숏'} · {EV_NAME[ev]}",
         f"{price:,.1f} 도달 ({move:+.2f}%)",
         f"진입 {entry:,.1f} · 손절 {stop:,.1f}",
         f"1차 익절 {t1:,.1f} · 2차 익절 {t2:,.1f}",
-        f"신호 {kst(sig_ms)} · 도달한 봉 {kst(ev_ms)}",
-    ])
+        f"신호 {kst(sig_ms)} · 도달 {kst(ev_ms)} ({bars}봉 뒤)",
+    ]
+    if reasons:
+        lines.append("안 맞은 이유 (차트로 추정):")
+        lines += [f"· {r}" for r in reasons]
+    return "\n".join(lines)
+
+
+def build_event(style, ev_key_ts, ev, inds):
+    """보낸 기록의 (스타일, 신호 시각, 종류)로 알림 메시지를 다시 만든다. 데이터 범위 밖이면 None."""
+    tf, htf = bs.STYLES[style]
+    ind, hind = inds[tf], inds[htf]
+    if ev_key_ts not in ind["ts"]:
+        return None
+    k = ind["ts"].index(ev_key_ts)
+    hmap = bs.map_htf(ind["ts"], hind["ts"], bs.TF_MS[tf], bs.TF_MS[htf])
+    d, _, _ = bs.signal_at(ind, k, htf_trend_at(hind, hmap, k))
+    if not d:
+        return None
+    lv = bs.levels(ind, k, d)
+    for m, e in trade_path(ind, k, d, lv, len(ind["c"]) - 1):
+        if e == ev:
+            reasons = stop_reasons(ind, hind, hmap, htf, k, m, d, lv) if ev == "stop" else ()
+            return event_message(style, tf, d, ev, lv, ind["ts"][k] + bs.TF_MS[tf], ind["ts"][m], m - k, reasons)
+    return None
 
 
 def main():
@@ -157,12 +210,22 @@ def main():
         return
     st = load_state()
     now_ms = time.time() * 1000
-    if os.environ.get("TEST_MESSAGE") == "true":
-        send(st, f"🔔 테스트 알림 · {kst(now_ms)}\n이 메시지가 보이면 알림 설정이 끝난 것입니다.")
     cache = {tf: bs.candles(tf, n) for tf, n in CANDLES.items()}
     inds = {tf: bs.indicators(cs) for tf, cs in cache.items()}
     for tf, cs in cache.items():
         inds[tf]["ts"] = [r[0] for r in cs]
+
+    if os.environ.get("TEST_MESSAGE") == "true":
+        # 가장 최근에 보낸 손절(없으면 익절) 알림을 지금 형식으로 다시 보내 본다
+        sample = None
+        events = [key.split("|") for key in st["sent"] if key.count("|") == 2]
+        for style, ts, ev in sorted(events, key=lambda e: (e[2] == "stop", int(e[1])), reverse=True):
+            sample = build_event(style, int(ts), ev, inds)
+            if sample:
+                break
+        send(st, f"🔔 테스트 알림 · {kst(now_ms)}\n" + (
+            "아래는 최근 알림을 지금 형식으로 다시 보낸 예시입니다.\n\n" + sample if sample
+            else "이 메시지가 보이면 알림 설정이 끝난 것입니다."))
 
     sent_any = False
     for style, (tf, htf) in bs.STYLES.items():
@@ -196,7 +259,8 @@ def main():
                 if now_ms - (ind["ts"][m] + bs.TF_MS[tf]) > LOOKBACK_MS[tf]:
                     st["sent"].append(key)  # 오래전에 닿은 것은 보내지 않고 기록만
                     continue
-                send(st, event_message(style, tf, d, ev, lv, ind["ts"][k] + bs.TF_MS[tf], ind["ts"][m]))
+                reasons = stop_reasons(ind, hind, hmap, htf, k, m, d, lv) if ev == "stop" else ()
+                send(st, event_message(style, tf, d, ev, lv, ind["ts"][k] + bs.TF_MS[tf], ind["ts"][m], m - k, reasons))
                 st["sent"].append(key)
                 sent_any = True
 

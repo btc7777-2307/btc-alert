@@ -126,6 +126,8 @@ tr:last-child td { border-bottom: 0; }
 .btn-link { font-size: 12px; color: var(--fg); text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; background: var(--panel-2); white-space: nowrap; }
 .btn-link:hover { border-color: var(--accent); }
 .plan .kv .v { font-size: 15px; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 14px; }
+.steps b { font-weight: 600; }
 .card.fs { position: fixed; inset: 0; z-index: 50; border-radius: 0; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); }
 .card.fs .state, .card.fs [data-plan], .card.fs [data-bt] { display: none; }
 .card.fs .chart { height: calc(100vh - 200px); min-height: 360px; }
@@ -179,7 +181,7 @@ body.fs-open { overflow: hidden; }
   </header>
 
   <div class="warn">
-    <strong>참고용 신호입니다.</strong> 비트겟 선물 2022~2026년 데이터로 검증한 규칙(4시간봉 돈치안 돌파)이지만 앞으로의 수익을 보장하지 않습니다. 주문 금액과 배율은 아래 주문 안내로 확인하고, 주문은 직접 판단해서 하세요. 투자 조언이 아닙니다.
+    <strong>참고용 신호예요.</strong> 2019~2026년 비트겟 데이터로 확인한 규칙이지만 앞으로의 수익을 보장하지 않아요. 넣을 금액과 배율은 아래 '할 일'을 보고, 주문은 직접 판단해서 하세요. 투자 조언이 아니에요.
   </div>
 
   <section class="stats" id="stats" aria-label="파생 지표">
@@ -196,12 +198,11 @@ body.fs-open { overflow: hidden; }
     <div class="panel">
       <h2>주문 계산 설정 <span class="muted" style="font-weight:400">이 기기에만 저장</span></h2>
       <div class="form">
-        <label for="in-seed">총 시드 (원)<input id="in-seed" type="number" min="1000" step="1000" value="200000"></label>
-        <label for="in-risk">손절 시 잃을 돈 (시드의 %)<input id="in-risk" type="number" min="0.1" max="50" step="0.1" value="2"></label>
+        <label for="in-seed">총 시드 (달러)<input id="in-seed" type="number" min="5" step="1" value="150"></label>
+        <label for="in-risk">기준 위험 (시드의 %)<input id="in-risk" type="number" min="0.1" max="50" step="0.1" value="5"></label>
         <label for="in-lev">배율 (배)<input id="in-lev" type="number" min="1" max="150" step="1" value="30"></label>
-        <label for="in-fx">1 USDT = 원 (비우면 업비트)<input id="in-fx" type="number" min="100" step="1" placeholder="자동"></label>
       </div>
-      <p class="note">주문 크기는 '손절에 닿으면 시드의 몇 %를 잃을지'로 정합니다. 배율은 필요한 증거금과 청산가만 바꾸고 손실 금액은 바꾸지 않습니다. 시드의 40%를 증거금으로 넣는 방식은 2022~2026년 백테스트에서 30배·50배 모두 시드가 0이 됐습니다. 텔레그램 알림의 주문 안내는 GitHub 설정값(시드 200,000원 · 2% · 30배)을 씁니다.</p>
+      <p class="note">기준 위험 5% = 손절폭만큼 가격이 움직였을 때 시드의 5%가 되도록 주문 크기를 정해요. 처음 진입(계획의 40%)만 하고 손절되면 실제로 잃는 돈은 시드의 약 2%예요. 추가 진입 뒤에는 손절을 본전으로 옮겨서 거의 잃지 않아요. 5%는 2019~2026년 비트겟 데이터에서 수익과 최대 낙폭의 균형이 가장 좋았던 값이에요. 배율은 넣는 돈(증거금)만 바꾸고 손실 금액은 바꾸지 않아요. 텔레그램 알림은 GitHub 설정값($150 · 5% · 30배)을 써요.</p>
     </div>
     <div class="panel">
       <h2>거래 기록 <span class="muted" style="font-weight:400">규칙대로 했을 때의 최근 진입·추가·청산</span></h2>
@@ -383,6 +384,7 @@ function replay(ind, live = true) {
     const px = t.exitPx ?? ind.c[n - 1];
     t.r = t.legs.reduce((s, [p, w]) => s + w * ((px - p) * d / risk - (FEE_IN + FEE_OUT) * p / risk), 0);
     t.bars = (t.exitK ?? n - 1) - t.entryK + 1;
+    t.exitTs = t.exitK !== null ? ind.ts[t.exitK] : null;
     out.push(t);
     if (t.state !== "closed") break;
     k = t.exitK + 1;
@@ -390,17 +392,19 @@ function replay(ind, live = true) {
   return out;
 }
 
-// 주문 크기: 손절에 닿으면 시드의 settings.risk%만 잃도록 계획 물량을 잡고 1차 40% / 추가 60%로 나눔
+// 주문 크기(달러): 손절폭만큼 움직였을 때 시드의 settings.risk%가 되는 계획 물량을 1차 40% / 추가 60%로 나눔.
+// 배율이 높아 손절보다 강제 청산이 먼저 오면, 그 신호는 안전한 배율로 낮춰 계산한다.
+const safeLevFor = stopPct => Math.max(1, Math.floor(0.8 / (stopPct + MMR)));
 function orderPlan(entry, stopPct) {
-  const fx = settings.fx || state.fx, lev = settings.lev, seed = settings.seed;
-  const loss = seed * settings.risk / 100, notional = loss / stopPct;   // 원
+  const seed = settings.seed, lev = settings.lev;
+  const notional = seed * settings.risk / 100 / stopPct;
+  const useLev = stopPct < (1 / lev - MMR) * 0.9 ? lev : safeLevFor(stopPct);
   const first = notional * FIRST, add = notional * (1 - FIRST);
-  const btc = krw => Math.max(0.0001, Math.round(krw / fx / entry * 1e4) / 1e4);
-  const liq = 1 / lev - MMR;
+  const btc = v => Math.max(0.0001, Math.round(v / entry * 1e4) / 1e4);
   return {
-    loss, notional, fx, lev, liq, safeLev: Math.max(1, Math.floor(0.8 / (stopPct + MMR))),
-    first: { margin: first / lev, btc: btc(first) }, add: { margin: add / lev, btc: btc(add) },
-    liqFirst: stopPct >= liq * 0.9,
+    seed, lev, useLev, liq: 1 / useLev - MMR,
+    first: { margin: first / useLev, btc: btc(first) }, add: { margin: add / useLev, btc: btc(add) },
+    loss1: first * stopPct + first * (FEE_IN + FEE_OUT),
   };
 }
 
@@ -412,27 +416,28 @@ function btSummary(trades) {
   let eq = 0, pk = 0, dd = 0;
   for (const r of rs) { eq += r; pk = Math.max(pk, eq); dd = Math.max(dd, pk - eq); }
   const years = {};
-  for (const t of tr) { const y = new Date(t.ts).getUTCFullYear(); years[y] = (years[y] || 0) + t.r; }
-  // 시드 시뮬레이션: 손절이 청산보다 멀면, 청산까지 가는 거래는 1차 증거금을 잃고 끝난 것으로 본다
-  const liq = 1 / settings.lev - MMR;
-  let seed = settings.seed, peak = seed, mdd = 0, liqs = 0;
+  for (const t of tr) { const y = new Date(t.exitTs || t.ts).getUTCFullYear(); years[y] = (years[y] || 0) + t.r; }  // 청산한 해 기준
+  // 지금 설정(시드·기준 위험)으로 따라 했을 때 시드 변화와 연도별 수익률 (배율은 안내대로 낮춰 손절 전 청산 없음)
+  let seed = settings.seed, peak = seed, mdd = 0, liqs = 0, yr = null, yStart = seed;
+  const yPct = {};
   for (const t of tr) {
-    const stopPct = t.risk / t.entry, riskKrw = seed * settings.risk / 100;
-    if (stopPct >= liq && t.mae >= liq) { seed -= riskKrw / stopPct * FIRST / settings.lev; liqs++; }
-    else seed += riskKrw * t.r;
+    const y = new Date(t.exitTs || t.ts).getUTCFullYear();
+    if (y !== yr) { if (yr !== null) yPct[yr] = seed / yStart - 1; yr = y; yStart = seed; }
+    seed += seed * settings.risk / 100 * t.r;
     seed = Math.max(seed, 0); peak = Math.max(peak, seed); mdd = Math.max(mdd, peak ? 1 - seed / peak : 1);
   }
+  if (yr !== null) yPct[yr] = yStart ? seed / yStart - 1 : -1;
   return {
     n: tr.length, win: rs.filter(r => r > 0).length / tr.length, be: rs.filter(r => r > -0.15 && r <= 0).length / tr.length,
     total: rs.reduce((a, b) => a + b, 0), pf: l ? g / l : 99, dd, years, from: tr[0].ts,
-    seed, mdd, liqs,
+    seed, mdd, liqs, yPct,
   };
 }
 
 // ===== 상태 =====
 const state = { inds: {}, results: {}, ctx: null, trades: [], cur: null, alerted: new Set(), firstRun: true, fx: 1400, backfilling: true };
-let settings = { seed: 200000, risk: 2, lev: 30, fx: 0 };  // fx 0 = 업비트 USDT 시세 자동
-try { Object.assign(settings, JSON.parse(localStorage.getItem("btc-dash-order") || "{}")); } catch (e) {}
+let settings = { seed: 150, risk: 5, lev: 30 };  // 달러 · 기준 위험 % · 배율
+try { Object.assign(settings, JSON.parse(localStorage.getItem("btc-dash-order-usd") || "{}")); } catch (e) {}
 
 function compute() {
   for (const tf of TFS) if (store[tf].size > 210) state.inds[tf] = indicators(series(tf));
@@ -535,7 +540,7 @@ function cardSkeleton(s) {
   const el = document.createElement("article");
   el.className = "card"; el.id = "card-" + s.key;
   el.innerHTML = `
-    <div class="card-head"><h3>${s.name}<span>20봉 돌파 + EMA200 · 손절 ATR×2 → 추적 ATR×3 · 40% 진입, 1R에서 60% 추가</span></h3><span class="countdown num" data-cd></span></div>
+    <div class="card-head"><h3>${s.name}<span>80시간 최고·최저가 돌파 + 큰 흐름(EMA200) 방향 · 40% 진입 → 유리하면 60% 추가 · 손절은 따라 움직임</span></h3><span class="countdown num" data-cd></span></div>
     <div class="state wait" data-state><span class="big">계산 중</span><span class="why">데이터를 불러오는 중입니다</span></div>
     <div class="sec plan" data-plan></div>
     <div class="tf-tabs" role="group" aria-label="차트 봉 선택">${CHART_TFS.map(([tf, label]) =>
@@ -563,25 +568,28 @@ function cardSkeleton(s) {
   return el;
 }
 
-const krw = x => Number.isFinite(x) ? Math.round(x).toLocaleString("ko-KR") + "원" : "—";
+const usd = (x, sign = false) => Number.isFinite(x) ? `${x < 0 ? "-" : sign ? "+" : ""}$${Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
 const sp = (x, d = 1) => `${x >= 0 ? "+" : ""}${x.toFixed(d)}`;
 
 // 주문 안내 (1차 40% · 추가 60%) — 신호가 있을 때는 그 신호, 없을 때는 '지금 신호가 나온다면'
-function planHtml(entry, stopPct, d, title) {
+function planHtml(entry, stopPct, d, title, addPx) {
   const p = orderPlan(entry, stopPct), seed = settings.seed;
   const liqPx = entry * (1 - d * p.liq);
   return `
     <span class="label">${title}</span>
-    <div class="kv">
-      <div><span class="note">1차 진입 증거금 (40%)</span><span class="v">${krw(p.first.margin)}</span><span class="note">시드의 ${(p.first.margin / seed * 100).toFixed(1)}% · ${p.first.btc.toFixed(4)} BTC</span></div>
-      <div><span class="note">추가 진입 증거금 (60%)</span><span class="v">${krw(p.add.margin)}</span><span class="note">시드의 ${(p.add.margin / seed * 100).toFixed(1)}% · ${p.add.btc.toFixed(4)} BTC</span></div>
-      <div><span class="note">손절 시 손실 (둘 다 진입 기준)</span><span class="v short">${krw(p.loss)}</span><span class="note">시드의 ${settings.risk}%</span></div>
-      <div><span class="note">${p.lev}배 청산가 (1차 기준)</span><span class="v ${p.liqFirst ? "short" : ""}">${fmt0(liqPx)}</span><span class="note">손절폭 ${(stopPct * 100).toFixed(2)}% · 청산 거리 ${(p.liq * 100).toFixed(2)}%</span></div>
-    </div>
-    <p class="note ${p.liqFirst ? "bad" : ""}">${p.liqFirst
-      ? `${p.lev}배에서는 손절보다 청산이 먼저 올 수 있어요. 이번 신호는 ${p.safeLev}배 이하로 하세요. (증거금은 배율이 낮아지면 그만큼 커지지만 손실 금액은 같습니다)`
-      : `${p.lev}배에서도 손절이 청산보다 먼저 옵니다 (안전 배율 ${p.safeLev}배 이하). 배율이 높아도 손절 시 손실은 똑같이 ${krw(p.loss)}입니다.`}
-      환율 1 USDT = ${fmt0(p.fx)}원${settings.fx ? "" : " (업비트)"}.</p>`;
+    <ol class="steps">
+      <li><b>지금 진입:</b> ${p.useLev}배로 시드의 <b>${(p.first.margin / seed * 100).toFixed(1)}%</b> (${usd(p.first.margin)}, ${p.first.btc.toFixed(4)} BTC)</li>
+      <li><b>${addPx ? fmt0(addPx) + "까지 " + (d === 1 ? "오르면" : "내려가면") : "1R 만큼 유리해지면"}:</b> ${p.useLev}배로 시드의 <b>${(p.add.margin / seed * 100).toFixed(1)}%</b> (${usd(p.add.margin)}) 더 넣고 손절을 본전으로</li>
+    </ol>
+    <p class="note">①만 하고 손절되면 약 <b class="bad">${usd(p.loss1)}</b> 잃어요 (시드의 ${(p.loss1 / seed * 100).toFixed(1)}%). ${p.useLev}배 강제 청산 가격은 ${fmt0(liqPx)}이에요.
+      ${p.useLev < p.lev ? `<span class="bad">이번 신호는 손절폭(${(stopPct * 100).toFixed(1)}%)이 커서 ${p.lev}배면 손절 전에 청산될 수 있어 ${p.useLev}배로 계산했어요.</span>` : `${p.lev}배여도 손절이 청산보다 먼저 와요.`}</p>`;
+}
+
+function whyText(ind, k, d) {
+  const lvl = d === 1 ? maxR(ind.h, k - BREAK_N, k) : minR(ind.l, k - BREAK_N, k);
+  return d === 1
+    ? `최근 80시간(4시간봉 20개) 중 가장 높은 가격(${fmt0(lvl)}) 위로 올라갔고, 큰 흐름 선(EMA200 = 최근 200개 봉 평균가 ${fmt0(ind.e200[k])})보다 위라서 오르는 힘이 강해요.`
+    : `최근 80시간(4시간봉 20개) 중 가장 낮은 가격(${fmt0(lvl)}) 아래로 내려갔고, 큰 흐름 선(EMA200 = 최근 200개 봉 평균가 ${fmt0(ind.e200[k])})보다 아래라서 떨어지는 힘이 강해요.`;
 }
 
 function renderCard(s) {
@@ -591,35 +599,36 @@ function renderCard(s) {
   const i = ind.c.length - 2, now = state.ctx ? state.ctx.price : ind.c[ind.c.length - 1];
   if (t && t.state === "pending") {
     st.className = "state " + (t.d === 1 ? "long" : "short");
-    st.innerHTML = `<span class="big">${DIR[t.d]} 신호 · 다음 봉 시가에 진입</span><span class="why"></span>`;
-    st.querySelector(".why").textContent = `종가 ${fmt(ind.c[t.sigK])}가 직전 20봉 ${t.d === 1 ? "최고가 " + fmt(maxR(ind.h, t.sigK - 20, t.sigK)) + "를 넘었고 EMA200 위" : "최저가 " + fmt(minR(ind.l, t.sigK - 20, t.sigK)) + "를 깼고 EMA200 아래"}`;
+    st.innerHTML = `<span class="big">${DIR[t.d]} 신호 · 다음 봉에서 진입</span><span class="why"></span>`;
+    st.querySelector(".why").textContent = whyText(ind, t.sigK, t.d);
   } else if (t) {
     const rNow = (now - t.entry) * t.d / t.risk;
     st.className = "state " + (t.d === 1 ? "long" : "short");
-    st.innerHTML = `<span class="big">${DIR[t.d]} 진행 중 · 지금 ${sp(rNow)}R</span><span class="why"></span>`;
-    st.querySelector(".why").textContent = `${new Date(t.ts + TF_MS["4H"]).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 신호 · 진입 ${fmt(t.entry)} · ${t.added ? "추가 진입 완료, 손절 본전 이상" : "추가 진입 대기"}`;
+    const pl = orderPlan(t.entry, t.risk / t.entry);
+    const money = ((now - t.entry) * t.d / t.entry) * pl.first.margin * pl.useLev + (t.added ? ((now - t.addPx) * t.d / t.addPx) * pl.add.margin * pl.useLev : 0);
+    st.innerHTML = `<span class="big">${DIR[t.d]} 진행 중 · 지금 ${usd(money, true)}</span><span class="why"></span>`;
+    st.querySelector(".why").textContent = `${new Date(t.ts + TF_MS["4H"]).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 진입 ${fmt0(t.entry)} · ${t.added ? "추가 진입 완료, 손절은 본전 이상" : "추가 진입 기다리는 중"} · 이유: ` + whyText(ind, t.sigK, t.d);
   } else {
     const hi = maxR(ind.h, i - 19, i + 1), lo = minR(ind.l, i - 19, i + 1), e200 = ind.e200[i];
     const lastT = state.trades.filter(x => x.state === "closed").pop();
     st.className = "state wait";
-    st.innerHTML = `<span class="big">관망 · 포지션 없음</span><span class="why"></span>`;
-    st.querySelector(".why").textContent = `다음 신호: 4시간봉 종가가 ${fmt0(hi)} 위 (EMA200 ${fmt0(e200)} 위일 때) → 롱 · ${fmt0(lo)} 아래 (EMA200 아래일 때) → 숏`
-      + (lastT ? ` · 지난 거래 ${DIR[lastT.d]} ${sp(lastT.r, 2)}R` : "");
+    st.innerHTML = `<span class="big">기다리는 중 · 포지션 없음</span><span class="why"></span>`;
+    st.querySelector(".why").textContent = `4시간봉이 ${fmt0(hi)} 위로 마감하고 큰 흐름 선(EMA200, 최근 200개 봉 평균 ${fmt0(e200)}) 위면 롱, ${fmt0(lo)} 아래로 마감하고 EMA200 아래면 숏이에요.`;
   }
   // 주문 안내
   if (t) {
     const stopPct = t.risk / t.entry, dc = t.d === 1 ? "long" : "short";
     plan.innerHTML = `
-      <span class="label">진입 · 손절 · 추가 진입</span>
       <div class="kv">
-        <div><span class="note">진입 (계획 물량의 40%)</span><span class="v">${fmt(t.entry)}</span></div>
-        <div><span class="note">손절 ${t.state === "open" && t.stop !== t.entry - t.d * t.risk ? "(추적 중)" : "(ATR×2)"}</span><span class="v short">${fmt(t.stop)}</span></div>
-        <div><span class="note">추가 진입 (1R, 나머지 60%)</span><span class="v ${dc}">${t.added ? "완료" : fmt(t.addPx)}</span></div>
-        <div><span class="note">익절</span><span class="v">추적 손절로</span></div>
-      </div>` + planHtml(t.entry, stopPct, t.d, "주문 안내 · 주문 넣기 전에 확인하세요");
+        <div><span class="note">진입가</span><span class="v">${fmt0(t.entry)}</span></div>
+        <div><span class="note">손절가 ${t.state === "open" && t.stop !== t.entry - t.d * t.risk ? "(따라 움직이는 중)" : ""}</span><span class="v short">${fmt0(t.stop)}</span></div>
+        <div><span class="note">추가 진입가</span><span class="v ${dc}">${t.added ? "완료" : fmt0(t.addPx)}</span></div>
+      </div>
+      <p class="note">손절은 처음엔 ATR×2(최근 4시간 평균 움직임 ${fmt0(ind.atr[t.sigK])}달러의 2배)만큼 떨어진 곳이고, 이후엔 가장 좋았던 가격에서 ATR×3만큼 뒤를 따라와요. 그래서 익절 가격은 따로 없고, 추세가 끝나 손절에 닿으면 정리돼요.</p>`
+      + planHtml(t.entry, stopPct, t.d, "할 일 · 주문 넣기 전에 확인하세요", t.added ? null : t.addPx);
   } else {
     const a = ind.atr[i], c = ind.c[i];
-    plan.innerHTML = planHtml(c, STOP_ATR * a / c, 1, "지금 신호가 나온다면 · 주문 안내 미리 보기");
+    plan.innerHTML = planHtml(c, STOP_ATR * a / c, 1, "지금 신호가 나온다면 · 미리 보기");
   }
   // 백테스트
   const bt = btSummary(state.trades), btEl = el.querySelector("[data-bt]");
@@ -630,18 +639,18 @@ function renderCard(s) {
       <div class="kv">
         <div><span class="note">거래</span><span class="v">${bt.n}회</span></div>
         <div><span class="note">승률 / 본전 근처</span><span class="v">${(bt.win * 100).toFixed(0)}% / ${(bt.be * 100).toFixed(0)}%</span></div>
-        <div><span class="note">합계 (1R = 손절 시 손실)</span><span class="v ${bt.total < 0 ? "short" : "long"}">${sp(bt.total)}R</span></div>
+        <div><span class="note">합계 (1R = 기준 위험만큼)</span><span class="v ${bt.total < 0 ? "short" : "long"}">${sp(bt.total)}R</span></div>
         <div><span class="note">최대 낙폭</span><span class="v">${bt.dd.toFixed(1)}R</span></div>
       </div>
+      <span class="label">지금 설정으로 따라 했다면 · 시드 ${usd(settings.seed)} · 기준 위험 ${settings.risk}%</span>
       <div class="scroll"><table class="mini"><thead><tr><th>연도</th>${yrs.map(([y]) => `<th>${y}</th>`).join("")}</tr></thead>
-        <tbody><tr><td>R</td>${yrs.map(([, v]) => `<td class="num ${v < 0 ? "bad" : "good"}">${sp(v)}</td>`).join("")}</tr></tbody></table></div>
-      <span class="label">지금 설정으로 따라 했다면 (시드 ${krw(settings.seed)} · 위험 ${settings.risk}% · ${settings.lev}배)</span>
+        <tbody><tr><td>수익률</td>${yrs.map(([y]) => { const v = bt.yPct[y]; return `<td class="num ${v < 0 ? "bad" : "good"}">${sp(v * 100, 0)}%</td>`; }).join("")}</tr>
+        <tr><td>R</td>${yrs.map(([, v]) => `<td class="num muted">${sp(v)}</td>`).join("")}</tr></tbody></table></div>
       <div class="kv">
-        <div><span class="note">최종 시드</span><span class="v ${bt.seed < settings.seed ? "short" : "long"}">${krw(bt.seed)}</span></div>
-        <div><span class="note">최대 낙폭</span><span class="v">${(bt.mdd * 100).toFixed(0)}%</span></div>
-        <div><span class="note">손절 전 청산</span><span class="v ${bt.liqs ? "short" : ""}">${bt.liqs}회</span></div>
+        <div><span class="note">최종 시드</span><span class="v ${bt.seed < settings.seed ? "short" : "long"}">${usd(bt.seed)}</span></div>
+        <div><span class="note">가장 많이 줄었을 때</span><span class="v">-${(bt.mdd * 100).toFixed(0)}%</span></div>
       </div>
-      <p class="note">승률이 낮아 보여도 손실은 작고(처음 40%만 들어가 있을 때 손절되면 0.4R), 추세를 끝까지 따라간 몇 번의 큰 수익이 합계를 만듭니다. 연속 손절이 10번 넘게 나올 수 있어요.</p>`;
+      <p class="note">이기는 횟수는 4번 중 1번꼴이에요. 대신 지는 거래는 작게(처음 40%만 들어간 상태에서 손절) 끝나고, 추세를 끝까지 따라간 몇 번의 큰 수익이 전체를 만들어요. 연속 손절이 10번 넘게 나올 수 있어요.</p>`;
   }
   drawChart(s);
 }
@@ -980,8 +989,9 @@ function drawChart(s) {
     c.lines.forEach(l => c.candles.removePriceLine(l)); c.lines = [];
     if (cur) {
       const dash = window.LightweightCharts.LineStyle.Dashed;
-      const liqPx = cur.entry * (1 - cur.d * (1 / settings.lev - MMR));
-      const items = [[cur.stop, short, "손절"], [cur.entry, tokenColor("--muted"), "진입"], [liqPx, tokenColor("--wait"), `청산 ${settings.lev}배`]];
+      const useLev = orderPlan(cur.entry, cur.risk / cur.entry).useLev;
+      const liqPx = cur.entry * (1 - cur.d * (1 / useLev - MMR));
+      const items = [[cur.stop, short, "손절"], [cur.entry, tokenColor("--muted"), "진입"], [liqPx, tokenColor("--wait"), `강제 청산 ${useLev}배`]];
       if (!cur.added) items.push([cur.addPx, tokenColor("--accent"), "추가 진입"]);
       for (const [price, color, title] of items) c.lines.push(c.candles.createPriceLine({ price, color, title, lineWidth: 1, lineStyle: dash, axisLabelVisible: true }));
     }
@@ -1391,20 +1401,11 @@ async function loadContext() {
     lsa: +lsa[lsa.length - 1].longShortAccountRatio, lsp: +lsp[lsp.length - 1].longShortPositionRatio, tbs: buy / sell,
   };
 }
-async function loadFx() {
-  // 원화 환산용 업비트 USDT 시세
-  try {
-    const r = await fetch("https://api.upbit.com/v1/ticker?markets=KRW-USDT");
-    const d = await r.json();
-    if (d && d[0] && d[0].trade_price) state.fx = d[0].trade_price;
-  } catch (e) {}
-}
-
 let busy = false;
 async function refresh() {
   if (busy) return; busy = true;
   try {
-    await Promise.all([loadContext(), loadFx()]);
+    await loadContext();
     for (const tf of TFS) merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 100 }));
     for (const tf of VIEW_ONLY) if (store[tf].size) merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 100 }));
     compute(); renderAll();
@@ -1423,15 +1424,14 @@ function openLink(url) {
 
 async function init() {
   const cards = $("cards"); STYLES.forEach(s => cards.appendChild(cardSkeleton(s)));
-  const inputs = { seed: "in-seed", fx: "in-fx", risk: "in-risk", lev: "in-lev" };
+  const inputs = { seed: "in-seed", risk: "in-risk", lev: "in-lev" };
   for (const [k, id] of Object.entries(inputs)) {
     const inp = $(id);
-    inp.value = k === "fx" && !settings.fx ? "" : settings[k];
+    inp.value = settings[k];
     inp.addEventListener("input", () => {
       const v = parseFloat(inp.value);
-      if (k === "fx") settings.fx = v > 0 ? v : 0;  // 비우면 업비트 시세
-      else if (v > 0) settings[k] = v; else return;
-      try { localStorage.setItem("btc-dash-order", JSON.stringify(settings)); } catch (e) {}
+      if (v > 0) settings[k] = v; else return;
+      try { localStorage.setItem("btc-dash-order-usd", JSON.stringify(settings)); } catch (e) {}
       STYLES.forEach(renderCard);
     });
   }
@@ -1439,7 +1439,7 @@ async function init() {
   $("btn-news").addEventListener("click", e => { if (openLink($("btn-news").href)) e.preventDefault(); });
   try {
     // 1단계: 신호 계산에 필요한 만큼 빨리 받기
-    await Promise.all([loadContext(), loadFx()]); renderTop();
+    await loadContext(); renderTop();
     merge(MAIN_TF, await get("candles", { symbol: SYM, productType: PT, granularity: MAIN_TF, limit: 1000 }));
     compute(); renderAll();
     setStatus("ok", "신호 준비됨 · 과거 데이터 받는 중");

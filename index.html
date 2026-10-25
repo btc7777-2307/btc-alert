@@ -99,6 +99,10 @@ tr:last-child td { border-bottom: 0; }
 .chart-wrap { position: relative; margin-top: 4px; }
 .chart { width: 100%; min-width: 0; overflow: hidden; height: clamp(500px, 62vw, 680px); touch-action: pan-y; }
 .chart-reset { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; font-size: 12px; padding: 4px 12px; border-radius: 999px; background: var(--panel-2); opacity: .92; }
+.tf-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 14px 0; }
+.tf-tabs button { font: 500 12px var(--font-num); padding: 4px 9px; position: relative; }
+.tf-tabs button.active { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.tf-tabs button.sig::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--wait); }
 .chart-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 14px 0; }
 .chart-tools button { font-size: 12px; padding: 4px 10px; }
 .chart-tools button.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -210,8 +214,11 @@ const STYLES = [
   { key: "swing", name: "스윙", tf: "4H", htf: "1D", tfName: "4시간봉" },
 ];
 const TFS = ["5m", "15m", "1H", "4H", "1D"];
-const BARS = { "5m": 10000, "15m": 10000, "1H": 9000, "4H": 4400, "1D": 1100 };
-const TF_MS = { "5m": 3e5, "15m": 9e5, "1H": 3.6e6, "4H": 1.44e7, "1D": 8.64e7 };
+const BARS = { "1m": 1500, "3D": 300, "5m": 10000, "15m": 10000, "1H": 9000, "4H": 4400, "1D": 1100 };
+const TF_MS = { "1m": 6e4, "5m": 3e5, "15m": 9e5, "1H": 3.6e6, "4H": 1.44e7, "1D": 8.64e7, "3D": 2.592e8 };
+// 차트에서 고를 수 있는 봉. 1분봉·3일봉은 차트 보기 전용이라 고를 때 받아 온다
+const CHART_TFS = [["1m", "1분"], ["5m", "5분"], ["15m", "15분"], ["4H", "4시간"], ["1D", "일봉"], ["3D", "3일봉"]];
+const VIEW_ONLY = ["1m", "3D"];
 const REFRESH_MS = 20000;
 const TREND_NAME = { 1: "상승", "-1": "하락", 0: "횡보" };
 const TREND_CLS = { 1: "up", "-1": "down", 0: "flat" };
@@ -241,7 +248,7 @@ async function get(path, params) {
 
 // ===== 캔들 저장소 =====
 const store = {};
-TFS.forEach(tf => store[tf] = new Map());
+[...TFS, ...VIEW_ONLY].forEach(tf => store[tf] = new Map());
 const backfilled = {};
 const lastTs = {};  // 각 봉의 가장 최근(진행 중인) 봉 시각
 function merge(tf, rows) {
@@ -406,6 +413,7 @@ try { logItems = JSON.parse(localStorage.getItem("btc-dash-log") || "[]"); } cat
 
 function compute(withBacktest) {
   for (const tf of TFS) if (store[tf].size > 210) state.inds[tf] = indicators(series(tf));
+  for (const tf of VIEW_ONLY) if (store[tf].size > 30) state.inds[tf] = indicators(series(tf));
   for (const s of STYLES) {
     const ind = state.inds[s.tf], hind = state.inds[s.htf];
     if (!ind || !hind) continue;
@@ -561,6 +569,8 @@ function cardSkeleton(s) {
   el.innerHTML = `
     <div class="card-head"><h3>${s.name} (${s.tfName})<span>상위 ${s.htf} 추세 기준</span></h3><span class="countdown num" data-cd></span></div>
     <div class="state wait" data-state><span class="big">계산 중</span><span class="why">데이터를 불러오는 중입니다</span></div>
+    <div class="tf-tabs" role="group" aria-label="차트 봉 선택">${CHART_TFS.map(([tf, label]) =>
+      `<button type="button" data-tf="${tf}"${tf === s.tf ? ' class="sig" title="신호 기준 봉"' : ""}>${label}</button>`).join("")}</div>
     <div class="chart-tools">
       <button type="button" data-tool="line">선긋기</button>
       <button type="button" data-tool="fib">피보나치 채널</button>
@@ -661,18 +671,21 @@ function renderCard(s) {
       }</tbody></table></div>
       <p class="note">다음 봉 시가 진입, 손절 또는 2R 익절, 최대 48봉 보유. 수수료가 거래당 평균 ${bt.fee.toFixed(2)}R를 차지합니다.</p>`;
   }
-  drawChart(s, ind, r);
+  drawChart(s);
 }
 
 // ===== 차트 (lightweight-charts 5: 확대·축소, 이동, 실시간, 보조지표 창, 선긋기·피보나치 채널) =====
 const toTime = ts => Math.floor(ts / 1000) + 9 * 3600;  // 차트 시간축을 한국시간으로 표시
 const charts = {};
 const EV_SHORT = { stop: "손절", t1: "1차 익절", t2: "2차 익절" };
-const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+const FIB_LEVELS = [-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5];
 const TOOL_STEPS = { line: ["선의 시작점을 누르세요", "선의 끝점을 누르세요"],
                      fib: ["기준선 시작점을 누르세요", "기준선 끝점을 누르세요", "채널 폭을 정할 점을 누르세요"] };
 let drawings = {};
 try { drawings = JSON.parse(localStorage.getItem("btc-dash-drawings") || "{}"); } catch (e) {}
+// 예전(카드별) 저장분은 그 카드의 신호 봉으로 옮김
+for (const st of STYLES) if (Array.isArray(drawings[st.key])) { drawings[`${st.key}|${st.tf}`] = drawings[st.key]; delete drawings[st.key]; }
+const dkey = s => `${s.key}|${(charts[s.key] && charts[s.key].tf) || s.tf}`;
 const saveDrawings = () => { try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); } catch (e) {} };
 
 function makeChart(s) {
@@ -732,6 +745,7 @@ function makeChart(s) {
   // 도구 버튼
   card.querySelector("[data-reset]").addEventListener("click", () => resetView(c));
   card.querySelectorAll("[data-tool]").forEach(btn => btn.addEventListener("click", () => onToolButton(s, btn)));
+  card.querySelectorAll("[data-tf]").forEach(btn => btn.addEventListener("click", () => chooseTf(s, btn.dataset.tf)));
   return c;
 }
 
@@ -747,10 +761,40 @@ function addTime(c, ts) {
   return true;
 }
 
-function drawChart(s, ind, r) {
+let viewTf = {};
+try { viewTf = JSON.parse(localStorage.getItem("btc-dash-viewtf") || "{}"); } catch (e) {}
+const loadingTf = {};
+async function ensureTf(tf) {
+  // 1분봉·3일봉은 처음 고를 때 받아 온다
+  if (loadingTf[tf] || store[tf].size) return;
+  loadingTf[tf] = true;
+  try {
+    merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 1000 }));
+    if (tf === "3D") await backfill("3D", BARS["3D"]);
+    state.inds[tf] = indicators(series(tf));
+    STYLES.forEach(drawChart);
+  } catch (e) { setStatus("err", `${tf} 차트 데이터를 못 받았습니다: ${e.message}`); }
+  finally { loadingTf[tf] = false; }
+}
+function chooseTf(s, tf) {
+  viewTf[s.key] = tf;
+  try { localStorage.setItem("btc-dash-viewtf", JSON.stringify(viewTf)); } catch (e) {}
+  if (charts[s.key] && charts[s.key].tool) setTool(s, null);
+  drawChart(s);
+}
+function drawChart(s) {
   const c = charts[s.key] || (charts[s.key] = makeChart(s));
   if (!c) return;
+  const tf = viewTf[s.key] || s.tf, r = state.results[s.key];
+  $("card-" + s.key).querySelectorAll("[data-tf]").forEach(b => b.classList.toggle("active", b.dataset.tf === tf));
+  if (c.tf !== tf) {
+    // 봉을 바꾸면 차트를 새로 채운다 (그린 선은 봉마다 따로 저장)
+    c.tf = tf; c.firstTs = null; c.lastTs = null; c.times = []; c.index = new Map();
+  }
+  const ind = state.inds[tf];
+  if (!ind || !r) { if (VIEW_ONLY.includes(tf)) ensureTf(tf); return; }
   const n = ind.c.length;
+  if (n < 30) return;
   const t = k => toTime(ind.ts[k]);
   const histColor = k => ind.hist[k] >= 0 ? (ind.hist[k] >= (ind.hist[k - 1] ?? 0) ? tokenColor("--long") : tokenColor("--long-dim"))
                                            : (ind.hist[k] <= (ind.hist[k - 1] ?? 0) ? tokenColor("--short") : tokenColor("--short-dim"));
@@ -765,7 +809,7 @@ function drawChart(s, ind, r) {
   let grew = false;
   if (c.firstTs === null) {
     // 처음 한 번만 전체를 넣고 최근 100봉이 보이게. 이후에는 이어 붙이기만 해서 확대·이동 상태를 유지
-    const k0 = Math.max(26, n - 1500);
+    const k0 = Math.max(26, n - 1500);  // MACD가 자리 잡은 뒤부터
     const ks = Array.from({ length: n - k0 }, (_, j) => k0 + j);
     const cols = ks.map(rows);
     cols[0].forEach((_, si) => cols[0][si][0].setData(cols.map(row => row[si][1])));
@@ -786,11 +830,12 @@ function drawChart(s, ind, r) {
 
   // 신호 화살표와, 초점 신호의 손절·익절 도달 표시
   const f = r.focus, long = tokenColor("--long"), short = tokenColor("--short");
-  const marks = r.marks.map(([k, d]) => ({
+  const own = tf === s.tf;
+  const marks = !own ? [] : r.marks.map(([k, d]) => ({
     time: t(k), position: d === 1 ? "belowBar" : "aboveBar",
     color: d === 1 ? long : short, shape: d === 1 ? "arrowUp" : "arrowDown", text: d === 1 ? "롱" : "숏",
   }));
-  if (f) for (const [m, ev] of f.ev) {
+  if (f && own) for (const [m, ev] of f.ev) {
     marks.push({ time: t(m), position: f.d === 1 ? (ev === "stop" ? "belowBar" : "aboveBar") : (ev === "stop" ? "aboveBar" : "belowBar"),
                  color: ev === "stop" ? short : long, shape: "circle", text: EV_SHORT[ev] });
   }
@@ -836,7 +881,7 @@ function shapeSeries(c, d) {
     const [A, B, C] = pts;
     if (A.j === B.j) return out;
     const slope = (B.p - A.p) / (B.j - A.j), base = j => A.p + slope * (j - A.j);
-    const j0 = Math.min(A.j, B.j);
+    const j0 = 0;  // 왼쪽 끝까지 연장
     if (!C) { seg(A.j, A.p, B.j, B.p, color); return out; }
     const off = C.p - base(C.j);
     for (const lv of FIB_LEVELS) {
@@ -849,7 +894,7 @@ function shapeSeries(c, d) {
 function renderDrawings(s) {
   const c = charts[s.key]; if (!c) return;
   c.drawn.forEach(ser => c.chart.removeSeries(ser));
-  c.drawn = (drawings[s.key] || []).flatMap(d => shapeSeries(c, d));
+  c.drawn = (drawings[dkey(s)] || []).flatMap(d => shapeSeries(c, d));
 }
 function clearPreview(c) { c.preview.forEach(ser => c.chart.removeSeries(ser)); c.preview = []; }
 let previewRaf = 0;
@@ -877,10 +922,10 @@ function onToolButton(s, btn) {
   const c = charts[s.key], tool = btn.dataset.tool;
   if (!c) return;
   if (tool === "line" || tool === "fib") { setTool(s, c.tool === tool ? null : tool); return; }
-  if (tool === "undo") { (drawings[s.key] || []).pop(); saveDrawings(); renderDrawings(s); return; }
+  if (tool === "undo") { (drawings[dkey(s)] || []).pop(); saveDrawings(); renderDrawings(s); return; }
   if (tool === "clear") {
     // 실수로 지우지 않게 한 번 더 누를 때만 지움
-    if (btn.dataset.armed) { drawings[s.key] = []; saveDrawings(); renderDrawings(s); delete btn.dataset.armed; btn.textContent = "모두 지우기"; return; }
+    if (btn.dataset.armed) { drawings[dkey(s)] = []; saveDrawings(); renderDrawings(s); delete btn.dataset.armed; btn.textContent = "모두 지우기"; return; }
     btn.dataset.armed = "1"; btn.textContent = "한 번 더 누르면 지움";
     setTimeout(() => { delete btn.dataset.armed; btn.textContent = "모두 지우기"; }, 3000);
   }
@@ -896,7 +941,7 @@ function onChartClick(s, p) {
     $("card-" + s.key).querySelector("[data-hint]").textContent = TOOL_STEPS[c.tool][c.pts.length] + " (버튼을 한 번 더 누르면 취소)";
     return;
   }
-  (drawings[s.key] = drawings[s.key] || []).push({ type: c.tool, pts: c.pts });
+  (drawings[dkey(s)] = drawings[dkey(s)] || []).push({ type: c.tool, pts: c.pts });
   saveDrawings(); setTool(s, null); renderDrawings(s);
 }
 
@@ -908,10 +953,11 @@ function onTick(price) {
   if (!state.ctx || !Number.isFinite(price)) return;
   state.ctx.price = price;
   const now = Date.now();
-  for (const tf of TFS) {
+  for (const tf of [...TFS, ...VIEW_ONLY]) {
     let row = store[tf].get(lastTs[tf]);
     if (!row) continue;
     if (now >= row[0] + TF_MS[tf]) {  // 새 봉 시작
+      if (TF_MS[tf] > TF_MS["4H"]) continue;  // 일봉·3일봉은 20초 갱신 때 거래소 봉으로 받음
       const t0 = Math.floor(now / TF_MS[tf]) * TF_MS[tf];
       row = [t0, price, price, price, price, 0];
       store[tf].set(t0, row); lastTs[tf] = t0;
@@ -925,7 +971,7 @@ function flushLive() {
   drawPending = false;
   $("price").textContent = fmt(state.ctx.price);
   for (const s of STYLES) {
-    const c = charts[s.key], row = store[s.tf].get(lastTs[s.tf]);
+    const c = charts[s.key], row = c && c.tf && store[c.tf].get(lastTs[c.tf]);
     if (!c || !row || c.lastTs === null || row[0] < c.lastTs) continue;
     c.candles.update({ time: toTime(row[0]), open: row[1], high: row[2], low: row[3], close: row[4] });
     if (addTime(c, row[0])) renderDrawings(s);
@@ -1011,6 +1057,7 @@ async function refresh() {
   try {
     await loadContext();
     for (const tf of TFS) merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 100 }));
+    for (const tf of VIEW_ONLY) if (store[tf].size) merge(tf, await get("candles", { symbol: SYM, productType: PT, granularity: tf, limit: 100 }));
     compute(true); renderAll();
     const allDone = TFS.every(tf => backfilled[tf]);
     setStatus("ok", `${new Date().toLocaleTimeString("ko-KR")} 갱신${allDone ? "" : " · 백테스트용 과거 데이터 받는 중"}`);

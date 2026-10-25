@@ -340,6 +340,10 @@ function trend(ind, i) {
 // 손절: 처음 ATR x2. 마감된 봉마다 (진입 후 최고가 - ATR x3)으로 따라감 (숏은 반대). 익절 목표 없음.
 // 검증: 비트겟 선물 2022-01~2026-10 254회, 연도별 모두 플러스, 최대 낙폭 7.1R (수수료 포함).
 const BREAK_N = 20, STOP_ATR = 2, TRAIL_ATR = 3, FIRST = 0.4, FEE_IN = 0.0002, FEE_OUT = 0.0006;
+// 익절: 4시간봉이 RSI 70 이상(롱) / 30 이하(숏)로 마감하면 들고 있는 물량의 30%를 한 번 익절, 손절은 최소 처음 진입가
+const TP_RSI = [70, 30], TP_FRAC = 0.3;
+// 거래 t가 px에서 끝났을 때 결과(R, 계획 물량 기준, 수수료 포함). 이미 익절한 몫 포함
+const rAt = (t, px) => t.realized + t.legs.reduce((s, [q, , w]) => s + w * ((px - q) * t.d / t.risk - (FEE_IN + FEE_OUT) * q / t.risk), 0);
 const DIR = { 1: "롱", "-1": "숏" };
 
 function stratSignal(ind, k) {
@@ -361,13 +365,14 @@ function replay(ind, live = true) {
     if (k + 1 >= n) {  // 신호는 나왔고 다음 봉이 아직 안 열림
       const e = ind.c[k];
       out.push({ d, sigK: k, ts: ind.ts[k], state: "pending", entry: e, risk, stop: e - d * risk, addPx: e + d * risk,
-                 added: false, events: [["signal", k, e]] });
+                 added: false, tp: false, legs: [], realized: 0, events: [["signal", k, e]] });
       break;
     }
     const e = ind.o[k + 1];
     const t = { d, sigK: k, ts: ind.ts[k], entryK: k + 1, entry: e, risk, stop: e - d * risk, addPx: e + d * risk,
-                added: false, best: e, mae: 0, legs: [[e, FIRST]], events: [["signal", k, ind.c[k]], ["entry", k + 1, e]],
-                exitK: null, exitPx: null, state: "open" };
+                added: false, tp: false, best: e, mae: 0, legs: [[e, FIRST, FIRST]], realized: 0,
+                events: [["signal", k, ind.c[k]], ["entry", k + 1, e]], exitK: null, exitPx: null, state: "open" };
+    const floor = () => d === 1 ? Math.max(t.stop, e) : Math.min(t.stop, e);  // 손절을 최소 처음 진입가로
     let m = k + 1;
     for (; m < n; m++) {
       const hi = ind.h[m], lo = ind.l[m];
@@ -378,16 +383,25 @@ function replay(ind, live = true) {
       }
       t.best = d === 1 ? Math.max(t.best, hi) : Math.min(t.best, lo);
       if (!t.added && (t.best - e) * d >= risk) {
-        t.added = true; t.legs.push([t.addPx, 1 - FIRST]); t.events.push(["add", m, t.addPx]);
-        t.stop = d === 1 ? Math.max(t.stop, e) : Math.min(t.stop, e);
+        t.added = true; t.legs.push([t.addPx, 1 - FIRST, 1 - FIRST]); t.events.push(["add", m, t.addPx]);
+        t.stop = floor();
       }
-      if (live && m === n - 1) break;  // 진행 중인 봉으로는 추적 손절을 올리지 않음
+      if (live && m === n - 1) break;  // 진행 중인 봉으로는 익절·추적 손절을 판단하지 않음
+      if (!t.tp && (d === 1 ? ind.rsi[m] >= TP_RSI[0] : ind.rsi[m] <= TP_RSI[1])) {
+        t.tp = true; const px = ind.c[m];
+        for (const leg of t.legs) {
+          const sell = Math.min(leg[2], leg[1] * TP_FRAC);
+          t.realized += sell * ((px - leg[0]) * d / risk - 2 * FEE_IN * leg[0] / risk);
+          leg[2] -= sell;
+        }
+        t.events.push(["tp", m, px]);
+        t.stop = floor();
+      }
       const trail = t.best - d * TRAIL_ATR * ind.atr[m];
       const nw = d === 1 ? Math.max(t.stop, trail) : Math.min(t.stop, trail);
       if (nw !== t.stop) { t.stop = nw; t.events.push(["trail", m, nw]); }
     }
-    const px = t.exitPx ?? ind.c[n - 1];
-    t.r = t.legs.reduce((s, [p, w]) => s + w * ((px - p) * d / risk - (FEE_IN + FEE_OUT) * p / risk), 0);
+    t.r = rAt(t, t.exitPx ?? ind.c[n - 1]);
     t.bars = (t.exitK ?? n - 1) - t.entryK + 1;
     t.exitTs = t.exitK !== null ? ind.ts[t.exitK] : null;
     out.push(t);
@@ -501,9 +515,10 @@ function eventAlarm(good, seconds = 5) {
 function alertTrade(kind, t, px) {
   const r = kind === "exit" ? t.r : 0;
   if (kind === "signal") alarm(t.d, 5); else eventAlarm(kind === "add" || r > 0);
-  const title = { signal: `4시간봉 돌파 ${DIR[t.d]} 신호`, add: `${DIR[t.d]} 1R 도달 · 추가 진입`, exit: `${DIR[t.d]} 청산 ${r >= 0 ? "+" : ""}${r.toFixed(2)}R` }[kind];
+  const title = { signal: `4시간봉 돌파 ${DIR[t.d]} 신호`, add: `${DIR[t.d]} 1R 도달 · 추가 진입`, tp: `${DIR[t.d]} 30% 익절`, exit: `${DIR[t.d]} 청산 ${r >= 0 ? "+" : ""}${r.toFixed(2)}R` }[kind];
   const body = kind === "signal" ? `다음 봉 시가 근처 ${fmt(px)} · 손절 ${fmt(t.stop)} · 계획 물량의 40%`
              : kind === "add" ? `${fmt(px)} 도달 · 나머지 60% 추가, 손절을 처음 진입가 ${fmt(t.entry)}로`
+             : kind === "tp" ? `RSI ${t.d === 1 ? "과열" : "과매도"} · ${fmt(px)}에서 들고 있는 물량의 30% 팔기`
              : `${fmt(px)}에서 정리 · 진입 ${fmt(t.entry)}`;
   if ("Notification" in window && Notification.permission === "granted") {
     try { new Notification(title, { body }); } catch (e) {}
@@ -551,7 +566,7 @@ function cardSkeleton(s) {
   const el = document.createElement("article");
   el.className = "card"; el.id = "card-" + s.key;
   el.innerHTML = `
-    <div class="card-head"><h3>${s.name}<span>80시간 최고·최저가 돌파 + 큰 흐름(EMA200) 방향 · 40% 진입 → 유리하면 60% 추가 · 손절은 따라 움직임</span></h3><span class="countdown num" data-cd></span></div>
+    <div class="card-head"><h3>${s.name}<span>80시간 최고·최저가 돌파 + 큰 흐름(EMA200) 방향 · 40% 진입 → 유리하면 60% 추가 · RSI 과열에서 30% 익절 · 나머지는 손절선이 따라감</span></h3><span class="countdown num" data-cd></span></div>
     <div class="state wait" data-state><span class="big">계산 중</span><span class="why">데이터를 불러오는 중입니다</span></div>
     <div class="sec plan" data-plan></div>
     <div class="tf-tabs" role="group" aria-label="차트 봉 선택">${CHART_TFS.map(([tf, label]) =>
@@ -592,9 +607,11 @@ function planHtml(entry, risk, d, title, t) {
   let rows = row("① 진입", fmt0(entry), `${p.useLev}배 · <b>${usd(p.first.margin)}</b> 넣기 (시드의 ${(p.first.margin / seed * 100).toFixed(1)}%) · ${p.first.btc.toFixed(4)} BTC`)
     + row("✋ 손절", fmt0(stop0), `손절되면 <b class="bad">${usd(loss1)}</b> (${pc(loss1)})`)
     + row("② 추가 진입", added ? "완료" : fmt0(addPx), `${p.useLev}배 · <b>${usd(p.add.margin)}</b> 더 넣기 (시드의 ${(p.add.margin / seed * 100).toFixed(1)}%) · ${p.add.btc.toFixed(4)} BTC`)
-    + row("", "", `→ 이때 손절을 <b>${fmt0(entry)}</b>(처음 진입가)로 옮기기 · 그 뒤 손절되면 <b class="bad">${usd(lossAfter)}</b> (추가분만 손해)`, "sub");
+    + row("", "", `→ 이때 손절을 <b>${fmt0(entry)}</b>(처음 진입가)로 옮기기 · 그 뒤 손절되면 <b class="bad">${usd(lossAfter)}</b> (추가분만 손해)`, "sub")
+    + row("💵 익절", t && t.tp ? "완료" : `RSI ${d === 1 ? "70↑" : "30↓"}`, `4시간봉이 RSI ${d === 1 ? "70 이상" : "30 이하"}로 마감하면 들고 있는 물량의 <b>30%</b> 팔기 · 손절은 처음 진입가 이상으로`)
+    + row("", "", `RSI = 최근 14개 봉의 오른 힘과 내린 힘 점수(0~100). ${d === 1 ? "70 넘으면 과열" : "30 밑이면 너무 빠짐"} · 나머지 70%는 손절선이 따라가다 닿으면 끝`, "sub");
   if (t && t.state === "open" && t.stop !== stop0) {
-    const now = legPnl(p, entry, addPx, d, t.stop, added);
+    const now = rAt(t, t.stop) * seed * settings.risk / 100;
     rows += row("🔒 지금 손절", fmt0(t.stop), `여기서 끝나면 <b class="${now >= 0 ? "good" : "bad"}">${usd(now, true)}</b> (${pc(now)})`);
   }
   rows += row("💰 참고", "", "가격이 이만큼 가면 (②까지 했을 때) · 익절 목표 아님, 손절선이 따라가며 지켜 줘요", "sub");
@@ -606,7 +623,7 @@ function planHtml(entry, risk, d, title, t) {
   return `
     <span class="label">${title} · 시드 ${usd(seed)} (= ${settings.seedKrw.toLocaleString("ko-KR")}원)</span>
     <div class="scroll"><table class="order"><thead><tr><th>할 일</th><th>가격</th><th>넣을 돈 · 결과</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="note">익절가는 따로 없어요. 손절선이 가격을 따라오다 닿으면 끝나요. ${p.useLev}배 강제 청산 가격은 ${fmt0(liqPx)}이에요.
+    <p class="note">가격 목표는 따로 없어요. 남은 물량은 손절선이 따라오다 닿으면 끝나요. ${p.useLev}배 강제 청산 가격은 ${fmt0(liqPx)}이에요.
       ${p.useLev < p.lev ? `<span class="bad">이번 신호는 손절폭(${(risk / entry * 100).toFixed(1)}%)이 커서 ${p.lev}배면 손절 전에 청산될 수 있어 ${p.useLev}배로 계산했어요.</span>` : `${p.lev}배여도 손절이 청산보다 먼저 와요.`}</p>`;
 }
 
@@ -629,7 +646,7 @@ function renderCard(s) {
   } else if (t) {
     const rNow = (now - t.entry) * t.d / t.risk;
     st.className = "state " + (t.d === 1 ? "long" : "short");
-    const money = legPnl(orderPlan(t.entry, t.risk / t.entry), t.entry, t.addPx, t.d, now, t.added);
+    const money = rAt(t, now) * seedUsd() * settings.risk / 100;
     st.innerHTML = `<span class="big">${DIR[t.d]} 진행 중 · 지금 ${usd(money, true)}</span><span class="why"></span>`;
     st.querySelector(".why").textContent = `${new Date(t.ts + TF_MS["4H"]).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 진입 ${fmt0(t.entry)} · ${t.added ? "추가 진입 완료, 손절은 처음 진입가 이상" : "추가 진입 기다리는 중"} · 이유: ` + whyText(ind, t.sigK, t.d);
   } else {
@@ -991,6 +1008,7 @@ function drawChart(s) {
       if (kind === "entry") marks.push({ time: t(m), position: tr.d === 1 ? "belowBar" : "aboveBar", color: tr.d === 1 ? long : short,
                                          shape: tr.d === 1 ? "arrowUp" : "arrowDown", text: DIR[tr.d] });
       else if (kind === "add") marks.push({ time: t(m), position: tr.d === 1 ? "belowBar" : "aboveBar", color: tokenColor("--accent"), shape: "circle", text: "추가" });
+      else if (kind === "tp") marks.push({ time: t(m), position: tr.d === 1 ? "aboveBar" : "belowBar", color: long, shape: "circle", text: "익절30%" });
       else if (kind === "exit") marks.push({ time: t(m), position: tr.d === 1 ? "aboveBar" : "belowBar", color: tr.r > 0 ? long : short,
                                              shape: "square", text: `${sp(tr.r, 1)}R` });
       else if (kind === "signal" && tr.state === "pending") marks.push({ time: t(m), position: tr.d === 1 ? "belowBar" : "aboveBar",
@@ -1373,7 +1391,7 @@ function renderLog() {
   if (!ind) return;
   const items = [];
   for (const t of state.trades.slice(-8)) for (const [kind, m, px] of t.events) {
-    if (kind === "entry" || kind === "add" || kind === "exit") items.push({ at: ind.ts[m], kind, t, px });
+    if (kind === "entry" || kind === "add" || kind === "tp" || kind === "exit") items.push({ at: ind.ts[m], kind, t, px });
   }
   if (state.cur && state.cur.state === "pending") items.push({ at: ind.ts[state.cur.sigK] + TF_MS[MAIN_TF], kind: "signal", t: state.cur, px: state.cur.entry });
   items.reverse();
@@ -1383,9 +1401,9 @@ function renderLog() {
     li.innerHTML = `<span class="t num"></span><span></span><span class="num"></span>`;
     li.children[0].textContent = new Date(it.at).toLocaleString("ko-KR", { year: "2-digit", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
     const dir = DIR[it.t.d];
-    li.children[1].textContent = { signal: `${dir} 신호 · 다음 봉 진입`, entry: `${dir} 진입 (40%)`, add: `${dir} 추가 진입 (60%)`,
+    li.children[1].textContent = { signal: `${dir} 신호 · 다음 봉 진입`, entry: `${dir} 진입 (40%)`, add: `${dir} 추가 진입 (60%)`, tp: `${dir} 30% 익절 (RSI)`,
                                    exit: `${dir} 청산 ${sp(it.t.r, 2)}R` }[it.kind];
-    li.children[1].className = it.kind === "exit" ? (it.t.r > 0 ? "good" : "bad") : (it.t.d === 1 ? "good" : "bad");
+    li.children[1].className = it.kind === "exit" ? (it.t.r > 0 ? "good" : "bad") : it.kind === "tp" ? "good" : (it.t.d === 1 ? "good" : "bad");
     li.children[2].textContent = fmt(it.px);
     ul.appendChild(li);
   }

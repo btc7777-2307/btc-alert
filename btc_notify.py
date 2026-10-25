@@ -160,6 +160,12 @@ def pnl(entry, add_px, d, risk, px, added):
     return sum(n * ((px - q) * d / q - (stg.FEE_IN + stg.FEE_OUT)) for n, q in legs)
 
 
+def money_at(t, px):
+    """거래 t가 px에서 끝났을 때 손익(달러). 30% 익절로 이미 확정된 몫까지 포함."""
+    seed, rk, _, _ = settings()
+    return stg.r_at(t, px) * seed * rk
+
+
 def pct_of(money, seed):
     return f"시드의 {money / seed * 100:+.1f}%"
 
@@ -184,13 +190,15 @@ def order_summary(e, d, risk, atr):
         f"✋ 손절 {fmt(stop)} · 손절되면 {usd(loss)} ({pct_of(loss, seed)})",
         f"② 추가 진입 {fmt(add)} · {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
         f"   → 이때 손절을 {fmt(e)}(처음 진입가)로 옮기기 · 그 뒤 손절되면 {usd(pnl(e, add, d, risk, e, True))} (처음 진입분은 본전, 추가분만 손해)",
+        f"💵 익절: 4시간봉이 RSI {'70 이상' if d == 1 else '30 이하'}로 마감하면 들고 있는 물량의 30% 팔기",
+        f"   (RSI = 최근 14개 봉의 오른 힘÷내린 힘 점수, {'70 넘으면 과열' if d == 1 else '30 밑이면 너무 빠짐'}) · 나머지 70%는 손절선이 따라가다 닿으면 끝",
         "💰 참고: 가격이 이만큼 가면 (익절 목표 아님, 손절선이 따라가며 지켜 줘요)",
     ]
     for k in (2, 3, 5):
         px = e + d * k * risk
         money = pnl(e, add, d, risk, px, True)
         lines.append(f"   {fmt(px)} → {usd(money, True)} ({pct_of(money, seed)})")
-    lines.append("익절가는 따로 없어요. 손절선이 가격을 따라오다 닿으면 끝나요.")
+    lines.append("가격 목표는 따로 없어요. 남은 물량은 손절선이 따라오다 닿으면 끝나요.")
     lines.append(f"(손절폭 = ATR×2 = 최근 4시간 평균 움직임 {fmt(atr)}달러의 2배)")
     if p["use_lev"] < p["lev"]:
         lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산될 수 있어서 {p['use_lev']:g}배로 계산했어요")
@@ -222,17 +230,25 @@ def event_message(ind, t, kind, m, px):
             f"② {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
             f"✋ 손절을 {fmt(e)}(처음 진입가)로 옮기세요 → 그 뒤 손절되면 {usd(pnl(e, t['add_px'], d, risk, e, True))} (추가분만 손해)",
         ])
+    if kind == "tp":
+        rsi = ind["rsi"][m]
+        got = t["realized"] * settings()[0] * settings()[1]
+        return "\n".join([
+            f"💵 {side} 30% 익절 · {fmt(px)}",
+            f"RSI {rsi:.0f} ({'과열' if d == 1 else '너무 빠짐'}) → 들고 있는 물량의 30% 팔기 · {usd(got, True)} 확정",
+            f"손절은 {fmt(e)}(처음 진입가) 이상으로 · 나머지 70%는 손절선이 따라가요",
+        ])
     if kind == "trail":
-        money = pnl(e, t["add_px"], d, risk, px, t.get("added"))
+        money = money_at(t, px)
         return "\n".join([
             f"🔒 {side} 손절 옮기기 → {fmt(px)}",
             f"여기서 끝나도 {usd(money, True)} ({pct_of(money, seed)})",
         ])
     if kind == "exit":
-        money = pnl(e, t["add_px"], d, risk, px, t.get("added"))
+        money = money_at(t, px)
         return "\n".join([
             f"{'✅' if money > 0 else '❌'} {side} 끝 · {fmt(px)}에서 정리",
-            f"결과 {usd(money, True)} ({pct_of(money, seed)}) · {'추가 진입 포함' if t.get('added') else '①만 진입'} · 4시간봉 {m - t['entry_k'] + 1}개 동안",
+            f"결과 {usd(money, True)} ({pct_of(money, seed)}) · {'추가 진입 포함' if t.get('added') else '①만 진입'}{' · 30% 익절 포함' if t.get('tp') else ''} · 4시간봉 {m - t['entry_k'] + 1}개 동안",
         ])
     return ""
 
@@ -246,7 +262,7 @@ def status_line(ind, trades):
     side = "롱" if t["d"] == 1 else "숏"
     if t["state"] == "pending":
         return f"지금: {side} 신호 · 다음 봉에서 진입"
-    money = pnl(t["entry"], t["add_px"], t["d"], t["risk"], ind["c"][-1], t.get("added"))
+    money = money_at(t, ind["c"][-1])
     return f"지금: {side} 진행 중 · 진입 {fmt(t['entry'])} · 손절 {fmt(t['stop'])} · 현재 {usd(money, True)}"
 
 

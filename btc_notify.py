@@ -292,6 +292,7 @@ def main():
         send(st, f"🔔 테스트 알림 · {kst(now_ms)}\n" + (
             "아래는 최근 신호를 지금 형식으로 다시 보낸 예시예요.\n\n" + signal_message(ind, t) + "\n\n" + status_line(ind, trades)
             if t else "이 메시지가 보이면 알림 설정이 끝난 것입니다."))
+        return  # 테스트는 메시지만 보내고 끝 (5분 확인 실행과 겹쳐 같은 알림을 두 번 보내지 않게)
 
     sent_any = False
     for t in trades[-3:]:

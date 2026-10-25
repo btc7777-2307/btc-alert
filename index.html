@@ -14,7 +14,8 @@
   --fg: #e4e9f0; --muted: #8d99ab; --accent: #79a8f2;
   --long: #3fbf9b; --short: #ef6d60; --wait: #d6a446;
   --long-bg: rgba(63,191,155,.12); --short-bg: rgba(239,109,96,.12); --wait-bg: rgba(214,164,70,.10);
-  --ema20: #d6a446; --ema50: #79a8f2;
+  --ema20: #d6a446; --ema50: #79a8f2; --bb: #a48be8; --draw: #e8c25a; --fib: #6fc3d6;
+  --long-dim: rgba(63,191,155,.45); --short-dim: rgba(239,109,96,.45);
   --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
   --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: dark;
@@ -25,7 +26,8 @@
     --fg: #182230; --muted: #5f6b7c; --accent: #2f66c4;
     --long: #13896b; --short: #cf4436; --wait: #a8741a;
     --long-bg: rgba(19,137,107,.10); --short-bg: rgba(207,68,54,.09); --wait-bg: rgba(168,116,26,.10);
-    --ema20: #b07a16; --ema50: #2f66c4;
+    --ema20: #b07a16; --ema50: #2f66c4; --bb: #7656c9; --draw: #b8860b; --fib: #1b8aa3;
+    --long-dim: rgba(19,137,107,.4); --short-dim: rgba(207,68,54,.4);
     color-scheme: light;
   }
 }
@@ -94,7 +96,18 @@ tr:last-child td { border-bottom: 0; }
 .state.wait { background: var(--wait-bg); }
 .state.wait .big { color: var(--wait); }
 .wrap { grid-template-columns: minmax(0, 1fr); }  /* 차트 캔버스 폭 때문에 페이지가 넓어지지 않게 */
-.chart { width: 100%; min-width: 0; overflow: hidden; height: clamp(320px, 45vw, 480px); margin-top: 4px; touch-action: pan-y; }
+.chart-wrap { position: relative; margin-top: 4px; }
+.chart { width: 100%; min-width: 0; overflow: hidden; height: clamp(500px, 62vw, 680px); touch-action: pan-y; }
+.chart-reset { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 3; font-size: 12px; padding: 4px 12px; border-radius: 999px; background: var(--panel-2); opacity: .92; }
+.chart-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 14px 0; }
+.chart-tools button { font-size: 12px; padding: 4px 10px; }
+.chart-tools button.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tool-hint { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3; max-width: calc(100% - 90px); text-align: center;
+  font-size: 12px; color: var(--panel); background: var(--accent); padding: 4px 10px; border-radius: 6px; pointer-events: none; }
+.tool-hint:empty { display: none; }
+.chart-legend.sub { padding-top: 4px; }
+.chart-legend .lg-bb { color: var(--bb); }
+.chart-legend .ohlc { flex: 1 1 100%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 10px 14px 0; font-size: 11px; color: var(--muted); }
 .chart-legend .lg-e20 { color: var(--ema20); } .chart-legend .lg-e50 { color: var(--ema50); }
 .live { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
@@ -183,7 +196,7 @@ tr:last-child td { border-bottom: 0; }
   </section>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 // 텔레그램 앱이 페이지에 전역 변수(css 등)를 넣기 때문에, 이름이 부딪히지 않게 전체를 함수 안에 둔다
 (() => {
@@ -289,7 +302,7 @@ function indicators(cs) {
   const e12 = ema(c, 12), e26 = ema(c, 26), macd = c.map((_, i) => e12[i] - e26[i]), sig = ema(macd, 9);
   const { up, lo } = bbands(c);
   const vavg = v.map((_, i) => { const s = Math.max(0, i - 20); let sum = 0; for (let j = s; j < i; j++) sum += v[j]; return sum / Math.max(1, i - s); });
-  return { ts, o, h, l, c, v, e20: ema(c, 20), e50: ema(c, 50), e200: ema(c, 200), rsi: rsi(c), hist: macd.map((m, i) => m - sig[i]), atr: atr(h, l, c), bu: up, bl: lo, vavg };
+  return { ts, o, h, l, c, v, e20: ema(c, 20), e50: ema(c, 50), e200: ema(c, 200), rsi: rsi(c), macd, sig, hist: macd.map((m, i) => m - sig[i]), atr: atr(h, l, c), bu: up, bl: lo, vavg };
 }
 const maxR = (a, s, e) => { let m = -Infinity; for (let i = s; i < e; i++) if (a[i] > m) m = a[i]; return m; };
 const minR = (a, s, e) => { let m = Infinity; for (let i = s; i < e; i++) if (a[i] < m) m = a[i]; return m; };
@@ -548,8 +561,15 @@ function cardSkeleton(s) {
   el.innerHTML = `
     <div class="card-head"><h3>${s.name} (${s.tfName})<span>상위 ${s.htf} 추세 기준</span></h3><span class="countdown num" data-cd></span></div>
     <div class="state wait" data-state><span class="big">계산 중</span><span class="why">데이터를 불러오는 중입니다</span></div>
-    <div class="chart-legend num" data-legend><span class="lg-e20">EMA20</span><span class="lg-e50">EMA50</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
-    <div class="chart" data-chart></div>
+    <div class="chart-tools">
+      <button type="button" data-tool="line">선긋기</button>
+      <button type="button" data-tool="fib">피보나치 채널</button>
+      <button type="button" data-tool="undo">되돌리기</button>
+      <button type="button" data-tool="clear">모두 지우기</button>
+    </div>
+    <div class="chart-legend num" data-legend><span class="lg-e20">EMA20</span><span class="lg-e50">EMA50</span><span class="lg-bb">볼린저(20,2)</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted ohlc" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
+    <div class="chart-wrap"><div class="chart" data-chart></div><button type="button" class="chart-reset" data-reset>차트 초기화</button><div class="tool-hint" data-hint></div></div>
+    <div class="chart-legend num sub"><span>아래 창: RSI(14) · MACD(12,26,9)</span></div>
     <div class="sec" data-levels></div>
     <div class="sec" data-bt><span class="label">백테스트</span><span class="note">과거 데이터를 불러오는 중…</span></div>`;
   return el;
@@ -644,80 +664,140 @@ function renderCard(s) {
   drawChart(s, ind, r);
 }
 
-// ===== 차트 (lightweight-charts: 두 손가락 확대·축소, 좌우로 끌어 이동, 실시간 갱신) =====
+// ===== 차트 (lightweight-charts 5: 확대·축소, 이동, 실시간, 보조지표 창, 선긋기·피보나치 채널) =====
 const toTime = ts => Math.floor(ts / 1000) + 9 * 3600;  // 차트 시간축을 한국시간으로 표시
 const charts = {};
 const EV_SHORT = { stop: "손절", t1: "1차 익절", t2: "2차 익절" };
+const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+const TOOL_STEPS = { line: ["선의 시작점을 누르세요", "선의 끝점을 누르세요"],
+                     fib: ["기준선 시작점을 누르세요", "기준선 끝점을 누르세요", "채널 폭을 정할 점을 누르세요"] };
+let drawings = {};
+try { drawings = JSON.parse(localStorage.getItem("btc-dash-drawings") || "{}"); } catch (e) {}
+const saveDrawings = () => { try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); } catch (e) {} };
 
 function makeChart(s) {
-  const box = document.querySelector(`#card-${s.key} [data-chart]`);
-  const LC = window.LightweightCharts;
-  if (!box || !LC) return null;
-  const chart = LC.createChart(box, {
+  const card = $("card-" + s.key), box = card.querySelector("[data-chart]");
+  const L = window.LightweightCharts;
+  if (!box || !L) return null;
+  const chart = L.createChart(box, {
     autoSize: true,
-    layout: { background: { type: "solid", color: tokenColor("--panel") }, textColor: tokenColor("--muted"), fontFamily: tokenColor("--font-num"), fontSize: 11 },
+    layout: { background: { type: "solid", color: tokenColor("--panel") }, textColor: tokenColor("--muted"), fontFamily: tokenColor("--font-num"), fontSize: 11,
+              panes: { separatorColor: tokenColor("--line") } },
     grid: { vertLines: { color: tokenColor("--line") }, horzLines: { color: tokenColor("--line") } },
     rightPriceScale: { borderColor: tokenColor("--line") },
     timeScale: { borderColor: tokenColor("--line"), timeVisible: true, secondsVisible: false, rightOffset: 4 },
-    crosshair: { mode: LC.CrosshairMode.Normal },
+    crosshair: { mode: L.CrosshairMode.Normal },
     localization: { priceFormatter: p => fmt(p, 1) },
     handleScroll: { vertTouchDrag: false },  // 세로로 끌면 차트가 아니라 페이지가 움직이게
   });
-  const candles = chart.addCandlestickSeries({
-    upColor: tokenColor("--long"), downColor: tokenColor("--short"), borderVisible: false,
-    wickUpColor: tokenColor("--long"), wickDownColor: tokenColor("--short"),
-    priceFormat: { type: "price", precision: 1, minMove: 0.1 },
+  const long = tokenColor("--long"), short = tokenColor("--short"), accent = tokenColor("--accent"), bb = tokenColor("--bb");
+  const lo = { lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  const one = { type: "price", precision: 1, minMove: 0.1 };
+  const candles = chart.addSeries(L.CandlestickSeries, {
+    upColor: long, downColor: short, borderVisible: false, wickUpColor: long, wickDownColor: short, priceFormat: one,
   });
-  const lineOpts = { lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
-  const e20 = chart.addLineSeries({ ...lineOpts, color: tokenColor("--ema20") });
-  const e50 = chart.addLineSeries({ ...lineOpts, color: tokenColor("--ema50") });
-  const ohlc = document.querySelector(`#card-${s.key} [data-ohlc]`);
-  const hint = ohlc.textContent;
+  const c = {
+    chart, candles,
+    e20: chart.addSeries(L.LineSeries, { ...lo, color: tokenColor("--ema20") }),
+    e50: chart.addSeries(L.LineSeries, { ...lo, color: tokenColor("--ema50") }),
+    bbU: chart.addSeries(L.LineSeries, { ...lo, color: bb, lineStyle: L.LineStyle.Dotted }),
+    bbM: chart.addSeries(L.LineSeries, { ...lo, color: bb, lineStyle: L.LineStyle.Dashed }),
+    bbL: chart.addSeries(L.LineSeries, { ...lo, color: bb, lineStyle: L.LineStyle.Dotted }),
+    // 보조지표 창 1: RSI(14), 창 2: MACD(12,26,9)
+    rsi: chart.addSeries(L.LineSeries, { ...lo, color: accent, lastValueVisible: true, title: "RSI", priceFormat: one }, 1),
+    hist: chart.addSeries(L.HistogramSeries, { priceLineVisible: false, lastValueVisible: false, priceFormat: one }, 2),
+    macd: chart.addSeries(L.LineSeries, { ...lo, color: accent, lastValueVisible: true, title: "MACD", priceFormat: one }, 2),
+    sig: chart.addSeries(L.LineSeries, { ...lo, color: tokenColor("--ema20"), priceFormat: one }, 2),
+    markers: null, times: [], index: new Map(), firstTs: null, lastTs: null,
+    lines: [], focusKey: "", drawn: [], preview: [], tool: null, pts: [],
+  };
+  c.markers = L.createSeriesMarkers(candles, []);
+  for (const [lv, col] of [[70, short], [50, tokenColor("--muted")], [30, long]]) {
+    c.rsi.createPriceLine({ price: lv, color: col, lineWidth: 1, lineStyle: L.LineStyle.Dashed, axisLabelVisible: false });
+  }
+  const panes = chart.panes();
+  panes[0].setStretchFactor(3); panes[1].setStretchFactor(1); panes[2].setStretchFactor(1.2);
+
+  // 십자선 위치의 봉 정보
+  const ohlc = card.querySelector("[data-ohlc]"), hint = ohlc.textContent;
   chart.subscribeCrosshairMove(p => {
     const b = p && p.seriesData && p.seriesData.get(candles);
-    ohlc.textContent = b ? `시 ${fmt(b.open)} 고 ${fmt(b.high)} 저 ${fmt(b.low)} 종 ${fmt(b.close)}` : hint;
+    const r = p && p.seriesData && p.seriesData.get(c.rsi), m = p && p.seriesData && p.seriesData.get(c.macd);
+    ohlc.textContent = b ? `시 ${fmt(b.open)} 고 ${fmt(b.high)} 저 ${fmt(b.low)} 종 ${fmt(b.close)}` +
+      (r ? ` · RSI ${r.value.toFixed(1)}` : "") + (m ? ` · MACD ${m.value.toFixed(1)}` : "") : hint;
+    if (c.tool && c.pts.length) schedulePreview(s, p);
   });
-  return { chart, candles, e20, e50, firstTs: null, lastTs: null, lines: [], focusKey: "" };
+  chart.subscribeClick(p => onChartClick(s, p));
+
+  // 도구 버튼
+  card.querySelector("[data-reset]").addEventListener("click", () => resetView(c));
+  card.querySelectorAll("[data-tool]").forEach(btn => btn.addEventListener("click", () => onToolButton(s, btn)));
+  return c;
+}
+
+function resetView(c) {
+  const n = c.times.length;
+  c.chart.timeScale().setVisibleLogicalRange({ from: n - 100, to: n + 4 });
+  for (const ser of [c.candles, c.rsi, c.hist]) ser.priceScale().applyOptions({ autoScale: true });
+}
+
+function addTime(c, ts) {
+  if (c.index.has(ts)) return false;
+  c.index.set(ts, c.times.length); c.times.push(ts);
+  return true;
 }
 
 function drawChart(s, ind, r) {
   const c = charts[s.key] || (charts[s.key] = makeChart(s));
   if (!c) return;
   const n = ind.c.length;
-  const bar = k => ({ time: toTime(ind.ts[k]), open: ind.o[k], high: ind.h[k], low: ind.l[k], close: ind.c[k] });
-  const pt = (key, k) => ({ time: toTime(ind.ts[k]), value: ind[key][k] });
+  const t = k => toTime(ind.ts[k]);
+  const histColor = k => ind.hist[k] >= 0 ? (ind.hist[k] >= (ind.hist[k - 1] ?? 0) ? tokenColor("--long") : tokenColor("--long-dim"))
+                                           : (ind.hist[k] <= (ind.hist[k - 1] ?? 0) ? tokenColor("--short") : tokenColor("--short-dim"));
+  const rows = k => [
+    [c.candles, { time: t(k), open: ind.o[k], high: ind.h[k], low: ind.l[k], close: ind.c[k] }],
+    [c.e20, { time: t(k), value: ind.e20[k] }], [c.e50, { time: t(k), value: ind.e50[k] }],
+    [c.bbU, { time: t(k), value: ind.bu[k] }], [c.bbM, { time: t(k), value: (ind.bu[k] + ind.bl[k]) / 2 }], [c.bbL, { time: t(k), value: ind.bl[k] }],
+    [c.rsi, { time: t(k), value: ind.rsi[k] }],
+    [c.hist, { time: t(k), value: ind.hist[k], color: histColor(k) }],
+    [c.macd, { time: t(k), value: ind.macd[k] }], [c.sig, { time: t(k), value: ind.sig[k] }],
+  ];
+  let grew = false;
   if (c.firstTs === null) {
     // 처음 한 번만 전체를 넣고 최근 100봉이 보이게. 이후에는 이어 붙이기만 해서 확대·이동 상태를 유지
-    const k0 = Math.max(0, n - 1500);
+    const k0 = Math.max(26, n - 1500);
     const ks = Array.from({ length: n - k0 }, (_, j) => k0 + j);
-    c.candles.setData(ks.map(bar));
-    c.e20.setData(ks.map(k => pt("e20", k)));
-    c.e50.setData(ks.map(k => pt("e50", k)));
-    c.chart.timeScale().setVisibleLogicalRange({ from: ks.length - 100, to: ks.length + 4 });
+    const cols = ks.map(rows);
+    cols[0].forEach((_, si) => cols[0][si][0].setData(cols.map(row => row[si][1])));
+    ks.forEach(k => addTime(c, ind.ts[k]));
     c.firstTs = ind.ts[k0];
+    resetView(c);
+    grew = true;
   } else {
     let k = ind.ts.lastIndexOf(c.lastTs);
     if (k < 0) k = n;  // 실시간 틱이 이미 더 새 봉을 그렸으면 건너뜀
     for (; k < n; k++) {
-      c.candles.update(bar(k)); c.e20.update(pt("e20", k)); c.e50.update(pt("e50", k));
+      for (const [ser, d] of rows(k)) ser.update(d);
+      grew = addTime(c, ind.ts[k]) || grew;
     }
   }
   c.lastTs = Math.max(c.lastTs || 0, ind.ts[n - 1]);
+  if (grew) renderDrawings(s);
 
   // 신호 화살표와, 초점 신호의 손절·익절 도달 표시
   const f = r.focus, long = tokenColor("--long"), short = tokenColor("--short");
   const marks = r.marks.map(([k, d]) => ({
-    time: toTime(ind.ts[k]), position: d === 1 ? "belowBar" : "aboveBar",
+    time: t(k), position: d === 1 ? "belowBar" : "aboveBar",
     color: d === 1 ? long : short, shape: d === 1 ? "arrowUp" : "arrowDown", text: d === 1 ? "롱" : "숏",
   }));
   if (f) for (const [m, ev] of f.ev) {
-    marks.push({ time: toTime(ind.ts[m]), position: f.d === 1 ? (ev === "stop" ? "belowBar" : "aboveBar") : (ev === "stop" ? "aboveBar" : "belowBar"),
+    marks.push({ time: t(m), position: f.d === 1 ? (ev === "stop" ? "belowBar" : "aboveBar") : (ev === "stop" ? "aboveBar" : "belowBar"),
                  color: ev === "stop" ? short : long, shape: "circle", text: EV_SHORT[ev] });
   }
-  c.candles.setMarkers(marks.sort((a, b) => a.time - b.time));
+  c.markers.setMarkers(marks.sort((a, b) => a.time - b.time));
 
   // 진입·손절·익절 가격선 (초점 신호가 바뀔 때만 다시 그림)
-  const key = f ? `${f.k && ind.ts[f.k]}|${f.d}` : "";
+  const key = f ? `${ind.ts[f.k]}|${f.d}` : "";
   if (key !== c.focusKey) {
     c.lines.forEach(l => c.candles.removePriceLine(l)); c.lines = [];
     if (f) {
@@ -729,6 +809,95 @@ function drawChart(s, ind, r) {
     }
     c.focusKey = key;
   }
+}
+
+// ----- 선긋기 · 피보나치 채널 -----
+// 점은 (봉 시각, 가격)으로 저장해 새로고침해도 남는다. 선은 봉 순서 기준으로 곧게 그린다.
+function shapeSeries(c, d) {
+  const L = window.LightweightCharts;
+  const pts = d.pts.map(q => ({ j: c.index.get(q.t), p: q.p }));
+  if (pts.some(q => q.j === undefined)) return [];
+  const last = c.times.length - 1, out = [];
+  const seg = (j1, p1, j2, p2, color, title, style) => {
+    if (j1 === j2) return;
+    if (j1 > j2) [j1, p1, j2, p2] = [j2, p2, j1, p1];
+    const ser = c.chart.addSeries(L.LineSeries, {
+      color, lineWidth: d.type === "line" ? 2 : 1, lineStyle: style ?? L.LineStyle.Solid,
+      priceLineVisible: false, lastValueVisible: !!title, title: title || "", crosshairMarkerVisible: false,
+      autoscaleInfoProvider: () => null,  // 그린 선 때문에 차트 눈금이 바뀌지 않게
+    }, 0);
+    ser.setData([{ time: toTime(c.times[j1]), value: p1 }, { time: toTime(c.times[j2]), value: p2 }]);
+    out.push(ser);
+  };
+  const color = tokenColor("--draw");
+  if (d.type === "line") {
+    seg(pts[0].j, pts[0].p, (pts[1] || pts[0]).j, (pts[1] || pts[0]).p, color);
+  } else if (d.type === "fib" && pts.length >= 2) {
+    const [A, B, C] = pts;
+    if (A.j === B.j) return out;
+    const slope = (B.p - A.p) / (B.j - A.j), base = j => A.p + slope * (j - A.j);
+    const j0 = Math.min(A.j, B.j);
+    if (!C) { seg(A.j, A.p, B.j, B.p, color); return out; }
+    const off = C.p - base(C.j);
+    for (const lv of FIB_LEVELS) {
+      seg(j0, base(j0) + lv * off, last, base(last) + lv * off, lv === 0 || lv === 1 ? color : tokenColor("--fib"),
+          String(lv), lv === 0 || lv === 1 ? L.LineStyle.Solid : L.LineStyle.Dashed);
+    }
+  }
+  return out;
+}
+function renderDrawings(s) {
+  const c = charts[s.key]; if (!c) return;
+  c.drawn.forEach(ser => c.chart.removeSeries(ser));
+  c.drawn = (drawings[s.key] || []).flatMap(d => shapeSeries(c, d));
+}
+function clearPreview(c) { c.preview.forEach(ser => c.chart.removeSeries(ser)); c.preview = []; }
+let previewRaf = 0;
+function schedulePreview(s, p) {
+  cancelAnimationFrame(previewRaf);
+  previewRaf = requestAnimationFrame(() => {
+    const c = charts[s.key], q = pointFrom(c, p);
+    clearPreview(c);
+    if (q) c.preview = shapeSeries(c, { type: c.tool, pts: [...c.pts, q] });
+  });
+}
+function pointFrom(c, p) {
+  if (!p || !p.point || p.logical === undefined || (p.paneIndex !== undefined && p.paneIndex !== 0)) return null;
+  const j = Math.max(0, Math.min(c.times.length - 1, Math.round(p.logical)));
+  const price = c.candles.coordinateToPrice(p.point.y);
+  return price === null ? null : { t: c.times[j], p: price };
+}
+function setTool(s, tool) {
+  const c = charts[s.key], card = $("card-" + s.key);
+  c.tool = tool; c.pts = []; clearPreview(c);
+  card.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("active", b.dataset.tool === tool));
+  card.querySelector("[data-hint]").textContent = tool ? TOOL_STEPS[tool][0] + " (버튼을 한 번 더 누르면 취소)" : "";
+}
+function onToolButton(s, btn) {
+  const c = charts[s.key], tool = btn.dataset.tool;
+  if (!c) return;
+  if (tool === "line" || tool === "fib") { setTool(s, c.tool === tool ? null : tool); return; }
+  if (tool === "undo") { (drawings[s.key] || []).pop(); saveDrawings(); renderDrawings(s); return; }
+  if (tool === "clear") {
+    // 실수로 지우지 않게 한 번 더 누를 때만 지움
+    if (btn.dataset.armed) { drawings[s.key] = []; saveDrawings(); renderDrawings(s); delete btn.dataset.armed; btn.textContent = "모두 지우기"; return; }
+    btn.dataset.armed = "1"; btn.textContent = "한 번 더 누르면 지움";
+    setTimeout(() => { delete btn.dataset.armed; btn.textContent = "모두 지우기"; }, 3000);
+  }
+}
+function onChartClick(s, p) {
+  const c = charts[s.key];
+  if (!c || !c.tool) return;
+  const q = pointFrom(c, p);
+  if (!q) return;
+  c.pts.push(q);
+  const need = TOOL_STEPS[c.tool].length;
+  if (c.pts.length < need) {
+    $("card-" + s.key).querySelector("[data-hint]").textContent = TOOL_STEPS[c.tool][c.pts.length] + " (버튼을 한 번 더 누르면 취소)";
+    return;
+  }
+  (drawings[s.key] = drawings[s.key] || []).push({ type: c.tool, pts: c.pts });
+  saveDrawings(); setTool(s, null); renderDrawings(s);
 }
 
 // ===== 실시간 시세 (비트겟 웹소켓) =====
@@ -759,6 +928,7 @@ function flushLive() {
     const c = charts[s.key], row = store[s.tf].get(lastTs[s.tf]);
     if (!c || !row || c.lastTs === null || row[0] < c.lastTs) continue;
     c.candles.update({ time: toTime(row[0]), open: row[1], high: row[2], low: row[3], close: row[4] });
+    if (addTime(c, row[0])) renderDrawings(s);
     c.lastTs = row[0];
   }
 }
@@ -893,7 +1063,7 @@ try {
   }
 } catch (e) {}
 // 점검용으로 내부 상태만 노출
-window.__dash = { state, store, STYLES, charts, levels, tradePath, compute, renderAll, renderLog, onTick, get logItems() { return logItems; } };
+window.__dash = { state, store, STYLES, charts, get drawings() { return drawings; }, levels, tradePath, compute, renderAll, renderLog, onTick, get logItems() { return logItems; } };
 init();
 connectLive();
 })();

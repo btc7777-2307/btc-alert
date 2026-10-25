@@ -81,6 +81,16 @@ def find_chat_id():
     return _chat["id"]
 
 
+def ensure_menu_button(st):
+    """내 봇 대화방 왼쪽 아래에 '신호판' 버튼(텔레그램 안에서 대시보드 열기)을 한 번 설정한다."""
+    url = os.environ.get("DASHBOARD_URL")
+    if not url or not os.environ.get("TELEGRAM_TOKEN") or st.get("menu") == url:
+        return
+    telegram("setChatMenuButton", chat_id=find_chat_id(),
+             menu_button=json.dumps({"type": "web_app", "text": "신호판", "web_app": {"url": url}}))
+    st["menu"] = url
+
+
 def send(st, text):
     if not os.environ.get("TELEGRAM_TOKEN"):
         print("[미리보기]\n" + text + "\n")
@@ -216,6 +226,10 @@ def main():
         inds[tf]["ts"] = [r[0] for r in cs]
 
     if os.environ.get("TEST_MESSAGE") == "true":
+        st.pop("menu", None)  # 수동 실행 때는 신호판 버튼도 다시 설정
+    ensure_menu_button(st)
+
+    if os.environ.get("TEST_MESSAGE") == "true":
         # 가장 최근에 보낸 손절(없으면 익절) 알림을 지금 형식으로 다시 보내 본다
         sample = None
         events = [key.split("|") for key in st["sent"] if key.count("|") == 2]
@@ -271,6 +285,8 @@ def main():
         lines = [f"✅ 신호 알림 작동 중 · {kst(now_ms)}", f"현재가 {price:,.1f}"]
         for tf in ["15m", "1H", "4H", "1D"]:
             lines.append(f"{tf} {NAMES[bs.trend(inds[tf], len(inds[tf]['c']) - 2)]}")
+        if os.environ.get("DASHBOARD_URL"):
+            lines.append(f"신호판: {os.environ['DASHBOARD_URL']}")
         send(st, "\n".join(lines))
         st["heartbeat"] = today
         sent_any = True

@@ -597,7 +597,7 @@ function planHtml(entry, risk, d, title, t) {
     const now = legPnl(p, entry, addPx, d, t.stop, added);
     rows += row("🔒 지금 손절", fmt0(t.stop), `여기서 끝나면 <b class="${now >= 0 ? "good" : "bad"}">${usd(now, true)}</b> (${pc(now)})`);
   }
-  rows += row("💰 수익 예시", "", "②까지 하고 그 가격에서 끝나면", "sub");
+  rows += row("💰 참고", "", "가격이 이만큼 가면 (②까지 했을 때) · 익절 목표 아님, 손절선이 따라가며 지켜 줘요", "sub");
   for (const k of [2, 3, 5]) {
     const px = entry + d * k * risk, m = legPnl(p, entry, addPx, d, px, true);
     rows += row("", fmt0(px), `<b class="good">${usd(m, true)}</b> (${pc(m)})`);

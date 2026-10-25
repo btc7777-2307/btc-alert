@@ -184,7 +184,7 @@ def order_summary(e, d, risk, atr):
         f"✋ 손절 {fmt(stop)} · 손절되면 {usd(loss)} ({pct_of(loss, seed)})",
         f"② 추가 진입 {fmt(add)} · {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
         f"   → 이때 손절을 {fmt(e)}(처음 진입가)로 옮기기 · 그 뒤 손절되면 {usd(pnl(e, add, d, risk, e, True))} (처음 진입분은 본전, 추가분만 손해)",
-        "💰 수익 예시 (②까지 하고 그 가격에서 끝나면)",
+        "💰 참고: 가격이 이만큼 가면 (익절 목표 아님, 손절선이 따라가며 지켜 줘요)",
     ]
     for k in (2, 3, 5):
         px = e + d * k * risk

@@ -3,12 +3,12 @@ name: BTC 신호 알림
 on:
   schedule:
     - cron: "*/5 * * * *"  # 5분마다 (GitHub 사정으로 몇 분~수십 분 늦어질 수 있음)
-  workflow_dispatch:  # Actions 화면에서 "Run workflow"로 바로 실행
+  workflow_dispatch:  # Actions 화면의 "Run workflow" 또는 cron-job.org가 5분마다 API로 실행
     inputs:
       test:
         description: "테스트 메시지 보내기"
         type: boolean
-        default: true
+        default: false  # 외부 예약(cron-job.org)이 5분마다 깨울 때는 테스트 메시지 없이
 
 permissions:
   contents: write  # state.json(보낸 알림 기록) 저장용

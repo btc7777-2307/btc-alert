@@ -41,6 +41,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           for i in $(seq 1 66); do
             git pull -q --rebase origin main || true          # 그사이 바뀐 코드·기록 반영
+            python3 send_briefing.py || echo "브리핑 전송 실패, 5분 뒤 다시"   # 아침 경제 브리핑 (하루 한 번)
             python3 btc_notify.py || echo "이번 확인 실패, 5분 뒤 다시"
             if [ -f state.json ] && [ -n "$(git status --porcelain state.json)" ]; then
               git add state.json && git commit -q -m "알림 기록 갱신"

@@ -208,6 +208,28 @@ def order_summary(e, d, risk, atr):
     return lines
 
 
+def briefing_notes(now_ms, hours=24):
+    """아침 브리핑(briefings/latest.json)에서 앞으로 hours시간 안의 중요 일정과 위험 요인."""
+    try:
+        b = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "briefings", "latest.json")))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    from datetime import datetime
+    out = []
+    for ev in b.get("events", []):
+        try:
+            t = datetime.fromisoformat(ev["time_kst"]).timestamp() * 1000
+        except (KeyError, ValueError):
+            continue
+        if 0 <= t - now_ms <= hours * 3.6e6 and ev.get("importance") in ("high", "중요", None):
+            out.append(f"• {kst(t)} {ev['name']} — 발표 전후 크게 흔들릴 수 있어요")
+    out += [f"• {r}" for r in b.get("risks", [])[:2]]
+    v = b.get("crypto_view") or {}
+    if v.get("bias"):
+        out.append(f"• 아침 브리핑 단기 견해: {v['bias']} ({v.get('reason', '')})")
+    return (["", "📰 오늘 아침 브리핑 참고"] + out) if out else []
+
+
 def signal_message(ind, t):
     k, d, e = t["sig_k"], t["d"], t["entry"]
     a = ind["atr"][k]
@@ -218,6 +240,7 @@ def signal_message(ind, t):
         *why_lines(ind, k, d),
         "",
         *order_summary(e, d, stg.STOP_ATR * a, a),
+        *briefing_notes(time.time() * 1000),
         "※ 참고용이에요. 주문은 직접 판단하세요.",
     ])
 

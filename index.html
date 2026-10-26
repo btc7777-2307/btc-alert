@@ -126,6 +126,12 @@ tr:last-child td { border-bottom: 0; }
 .btn-link { font-size: 12px; color: var(--fg); text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; background: var(--panel-2); white-space: nowrap; }
 .btn-link:hover { border-color: var(--accent); }
 .plan .kv .v { font-size: 15px; }
+.brief-summary { margin: 0 0 10px; font-size: 15px; font-weight: 500; }
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
+.brief-grid ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; display: grid; gap: 3px; }
+.brief-grid p { margin: 4px 0 0; font-size: 13px; }
+.brief details { margin-top: 10px; font-size: 13px; }
+.brief pre { white-space: pre-wrap; font: 13px/1.6 var(--font-ui); margin: 8px 0 0; }
 .flow { margin: 4px 0 0; padding-left: 4px; list-style: none; display: grid; gap: 8px; font-size: 14px; }
 .flow li { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); }
 .flow li.done { opacity: .55; }
@@ -201,6 +207,17 @@ body.fs-open { overflow: hidden; }
     <div class="stat"><span class="label">롱/숏 계정비</span><span class="v num" id="s-lsa">—</span><span class="h" id="s-lsa-h">—</span></div>
     <div class="stat"><span class="label">롱/숏 포지션비</span><span class="v num" id="s-lsp">—</span><span class="h" id="s-lsp-h">—</span></div>
     <div class="stat"><span class="label">24h 테이커 매수/매도</span><span class="v num" id="s-tbs">—</span><span class="h" id="s-tbs-h">—</span></div>
+  </section>
+
+  <section class="panel brief" id="brief" hidden>
+    <h2>오늘 아침 브리핑 <span class="muted" id="brief-date" style="font-weight:400"></span></h2>
+    <p id="brief-summary" class="brief-summary"></p>
+    <div class="brief-grid">
+      <div><span class="label">오늘 주요 일정</span><ul id="brief-events"></ul></div>
+      <div><span class="label">차트 볼 때 조심할 점</span><ul id="brief-risks"></ul></div>
+      <div><span class="label">암호화폐 단기 견해 (참고)</span><p id="brief-view"></p></div>
+    </div>
+    <details><summary>브리핑 전체 보기</summary><pre id="brief-text"></pre></details>
   </section>
 
   <section class="cards" id="cards"></section>
@@ -1455,6 +1472,32 @@ async function loadFx() {
   $("seed-usd").textContent = `= ${usd(seedUsd())}`;
 }
 
+// 아침 경제 브리핑 (briefings/latest.json, 매일 05:30 작성). 내용은 웹에서 모은 글이라 모두 글자로만 넣는다
+async function loadBriefing() {
+  try {
+    const r = await fetch("briefings/latest.json?t=" + Date.now());
+    if (!r.ok) return;
+    const b = await r.json();
+    $("brief").hidden = false;
+    $("brief-date").textContent = `${b.date} · 매일 오전 6시쯤 업데이트`;
+    $("brief-summary").textContent = b.summary || "";
+    const fill = (id, items) => {
+      const ul = $(id); ul.textContent = "";
+      for (const x of items) { const li = document.createElement("li"); li.textContent = x; ul.appendChild(li); }
+      if (!items.length) { const li = document.createElement("li"); li.textContent = "없음"; ul.appendChild(li); }
+    };
+    fill("brief-events", (b.events || []).map(ev => {
+      const t = new Date(ev.time_kst);
+      const when = isNaN(t) ? "" : t.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) + " ";
+      return `${when}${ev.name}${ev.importance === "high" ? " (중요)" : ""}`;
+    }));
+    fill("brief-risks", b.risks || []);
+    const v = b.crypto_view || {};
+    $("brief-view").textContent = v.bias ? `${v.bias} · ${v.reason || ""}${v.invalidate ? " · 틀렸다고 볼 조건: " + v.invalidate : ""}` : "확인 불가";
+    $("brief-text").textContent = b.text || "";
+  } catch (e) {}
+}
+
 let busy = false;
 async function refresh() {
   if (busy) return; busy = true;
@@ -1502,6 +1545,7 @@ async function init() {
     setStatus("err", "불러오기 실패: " + e.message);
   }
   setInterval(refresh, REFRESH_MS);
+  loadBriefing(); setInterval(loadBriefing, 10 * 60 * 1000);
   cloudPull(); setInterval(cloudPull, 30000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) cloudPull(); });
   setInterval(tickCountdown, 1000);

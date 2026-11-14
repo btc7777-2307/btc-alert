@@ -7,6 +7,7 @@ GitHub Actions가 몇 분~30분마다 실행한다. 매번 4시간봉으로 규�
 보낸 신호와 하루 한 번 상태 알림 기록은 state.json에 남겨 같은 알림을 두 번 보내지 않는다.
 """
 import json
+import math
 import os
 import sys
 import time
@@ -154,13 +155,20 @@ SL_HOW = "(손절 바꾸는 곳: 포지션 목록의 TP/SL(익절/손절) 버튼
 
 
 def plan(entry, risk):
-    """계획 물량 = 손절폭(risk)만큼 움직이면 시드의 RISK_PCT%가 되는 크기. 1차 40%, 추가 60%."""
-    seed, rk, lev, seed_krw = settings()
+    """시드(이 거래에 쓸 돈)를 격리 증거금으로 다 쓴다고 보고 배율을 정한다.
+    계획 물량 = 손절폭(risk)만큼 움직이면 시드의 RISK_PCT%를 잃는 크기. 1차 40%, 추가 60%.
+    배율 = 계획 물량 ÷ 시드 (올림) → 1차+추가 증거금 합이 시드를 넘지 않는다.
+    그 배율이 손절 전에 강제 청산될 만큼 높으면 안전한 배율로 낮추고 물량을 줄인다(scaled)."""
+    seed, rk, lev_cap, seed_krw = settings()
     stop_pct = risk / entry
     notional = seed * rk / stop_pct
-    use_lev = lev if stop_pct < (1 / lev - 0.004) * 0.9 else max_safe_leverage(stop_pct)
+    safe = min(lev_cap, max_safe_leverage(stop_pct))
+    use_lev = max(1, math.ceil(notional / seed - 1e-9))
+    scaled = use_lev > safe
+    if scaled:
+        use_lev, notional = safe, seed * safe
     first, add = notional * stg.FIRST, notional * (1 - stg.FIRST)
-    return dict(seed=seed, seed_krw=seed_krw, lev=lev, use_lev=use_lev, first=first, add=add,
+    return dict(seed=seed, seed_krw=seed_krw, use_lev=use_lev, scaled=scaled, first=first, add=add,
                 m1=first / use_lev, m2=add / use_lev)
 
 
@@ -200,16 +208,17 @@ def order_summary(e, d, risk, atr):
     button = "초록색 「롱/매수」" if d == 1 else "빨간색 「숏/매도」"
     loss1, loss2 = pnl(e, add, d, risk, stop, False), pnl(e, add, d, risk, e, True)
     lines = [
-        f"━━ 비트겟 주문 화면에 이렇게 넣기 (시드 {usd(seed)} ≈ {p['seed_krw']:,.0f}원) ━━",
+        f"━━ 비트겟 주문 화면에 이렇게 넣기 (이 거래에 쓸 돈 {usd(seed)} ≈ {p['seed_krw']:,.0f}원 · 격리) ━━",
         f"1️⃣ 지금 {side}({'오를 쪽' if d == 1 else '내릴 쪽'}에 거는 것) 진입",
         "   ① 마진 모드: 격리(이 거래에 넣은 돈만 위험)",
         f"   ② 배율: {p['use_lev']:g}배(넣은 돈의 몇 배로 거래)",
         "   ③ 주문 종류: 시장가(지금 가격에 바로 체결)",
-        f"   ④ 수량: 주문 금액 {usd(p['first'])} (증거금(실제로 들어가는 내 돈) {usd(p['m1'])} · 시드의 {p['m1'] / seed * 100:.1f}%)",
+        f"   ④ 넣을 돈(증거금): {usd(p['m1'])} → 주문 금액(배율 곱한 크기) {usd(p['first'])}",
         f"   ⑤ TP/SL(익절/손절) 칸을 켜고 손절(SL)에 {fmt(stop)} 입력 ← 꼭 같이 걸기",
         f"   ⑥ {button} 버튼 누르기",
         f"2️⃣ {fmt(add)}까지 {go} (돈 버는 중 · 알림이 가요)",
-        f"   같은 방법으로 시장가 {side} 주문 금액 {usd(p['add'])} 추가 (증거금 {usd(p['m2'])})",
+        f"   같은 방법으로 시장가 {side} 증거금 {usd(p['m2'])} 추가 (주문 금액 {usd(p['add'])})",
+        f"   → 넣은 돈 합계 {usd(p['m1'] + p['m2'])} / {usd(seed)}",
         f"   → 포지션 손절(SL)을 {fmt(e)}(처음 진입가)로 수정",
         f"3️⃣ RSI(오르내림 힘을 0~100으로 나타낸 점수)가 {'70 위' if d == 1 else '30 밑'}으로 마감하면 (알림이 가요)",
         "   들고 있는 수량의 30%를 시장가로 정리해서 수익 챙기기",
@@ -225,8 +234,9 @@ def order_summary(e, d, risk, atr):
     lines.append(f"(손절폭 = ATR(최근 4시간 평균 움직임 폭) {fmt(atr)}달러의 2배)")
     lines.append(QTY_HOW)
     lines.append(SL_HOW)
-    if p["use_lev"] < p["lev"]:
-        lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산(넣은 돈이 바닥나 거래소가 강제로 정리)될 수 있어서 {p['use_lev']:g}배로 계산했어요")
+    if p["scaled"]:
+        lines.append(f"⚠ 이번엔 손절폭이 아주 좁아서, 더 높은 배율이면 손절 전에 강제 청산(넣은 돈이 바닥나 거래소가 강제로 정리)될 수 있어요. "
+                     f"{p['use_lev']:g}배로 낮추고 물량을 줄였어요 (손절 시 손해도 그만큼 작아요)")
     return lines
 
 
@@ -275,7 +285,7 @@ def event_message(ind, t, kind, m, px):
     if kind == "add":
         return "\n".join([
             f"📈 {side} 2️⃣ 추가 진입 · {fmt(px)} 도달 (돈 버는 중)",
-            f"① 시장가 {side} 주문 금액 {usd(p['add'])} 추가 ({p['use_lev']:g}배 · 격리 · 증거금 {usd(p['m2'])})",
+            f"① 시장가 {side} 증거금 {usd(p['m2'])} 추가 ({p['use_lev']:g}배 · 격리 · 주문 금액 {usd(p['add'])})",
             f"② 포지션 손절(SL)을 {fmt(e)}(처음 진입가)로 수정 → 그 뒤 손절되면 {usd(pnl(e, t['add_px'], d, risk, e, True))} (추가분만 손해)",
             SL_HOW,
         ])

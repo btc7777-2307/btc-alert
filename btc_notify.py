@@ -189,10 +189,10 @@ def order_summary(e, d, risk, atr):
     loss1, loss2 = pnl(e, add, d, risk, stop, False), pnl(e, add, d, risk, e, True)
     lines = [
         f"━━ 이렇게 하세요 (시드 {usd(seed)} = {p['seed_krw']:,.0f}원) ━━",
-        f"1️⃣ 지금 {fmt(e)}에 {side} 진입 · {p['use_lev']:g}배 · {usd(p['m1'])} (시드의 {p['m1'] / seed * 100:.1f}%)",
+        f"1️⃣ 지금 {fmt(e)}에 {side}({'오를 쪽' if d == 1 else '내릴 쪽'}에 거는 것) 진입 · {p['use_lev']:g}배(넣은 돈의 몇 배로 거래) · {usd(p['m1'])} (시드의 {p['m1'] / seed * 100:.1f}%)",
         f"2️⃣ {fmt(add)}까지 {go} (돈 버는 중) · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
         f"    → 손절을 {fmt(e)}(처음 진입가)로 {'올리기' if d == 1 else '내리기'}",
-        f"3️⃣ RSI가 {'70 위' if d == 1 else '30 밑'}으로 마감하면 · 들고 있는 것의 30% 팔아서 수익 챙기기",
+        f"3️⃣ RSI(오르내림 힘을 0~100으로 나타낸 점수)가 {'70 위' if d == 1 else '30 밑'}으로 마감하면 · 들고 있는 것의 30% 팔아서 수익 챙기기",
         "    (가격이 아니라 RSI로 정해져서 2️⃣보다 먼저 올 수도 있어요. 오면 알림이 가요)",
         "4️⃣ 나머지는 손절선이 따라오다 닿으면 끝 (알림이 가요)",
         "",
@@ -204,7 +204,7 @@ def order_summary(e, d, risk, atr):
     lines.append("    " + " · ".join(f"{fmt(e + d * k * risk)} → {usd(pnl(e, add, d, risk, e + d * k * risk, True), True)}" for k in (2, 3, 5)))
     lines.append(f"(손절폭 = ATR×2 = 최근 4시간 평균 움직임 {fmt(atr)}달러의 2배 · RSI = 0~100 점수, {'70 넘으면 과열' if d == 1 else '30 밑이면 너무 빠짐'})")
     if p["use_lev"] < p["lev"]:
-        lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산될 수 있어서 {p['use_lev']:g}배로 계산했어요")
+        lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산(넣은 돈이 바닥나 거래소가 강제로 정리)될 수 있어서 {p['use_lev']:g}배로 계산했어요")
     return lines
 
 
@@ -261,7 +261,7 @@ def event_message(ind, t, kind, m, px):
         got = t["realized"] * settings()[0] * settings()[1]
         return "\n".join([
             f"💵 {side} 3️⃣ 30% 익절 · {fmt(px)}",
-            f"RSI {rsi:.0f} ({'과열' if d == 1 else '너무 빠짐'}) → 들고 있는 물량의 30% 팔기 · {usd(got, True)} 확정",
+            f"RSI(오르내림 힘 점수 0~100) {rsi:.0f} ({'과열' if d == 1 else '너무 빠짐'}) → 들고 있는 물량의 30% 팔기 · {usd(got, True)} 확정",
             f"손절은 {fmt(e)}(처음 진입가) 이상으로 · 나머지 70%는 손절선이 따라가요",
         ])
     if kind == "trail":

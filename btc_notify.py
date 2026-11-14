@@ -142,6 +142,17 @@ def max_safe_leverage(stop_pct):
     return max(1, int(0.8 / (stop_pct + 0.004)))
 
 
+BTC_STEP = 0.0001  # 비트겟 BTCUSDT 선물 최소 주문 단위
+
+
+def btc_qty(notional, px):
+    """주문 금액(달러) → 비트겟 주문 수량(BTC). 최소 단위로 내림, 최소 1단위."""
+    return max(BTC_STEP, int(notional / px / BTC_STEP + 1e-9) * BTC_STEP)
+
+
+SL_HOW = "(손절 바꾸는 곳: 포지션 목록의 TP/SL(익절/손절) 버튼 → 손절 가격 수정 · 앱 버전마다 이름이 조금 다를 수 있어요)"
+
+
 def plan(entry, risk):
     """계획 물량 = 손절폭(risk)만큼 움직이면 시드의 RISK_PCT%가 되는 크기. 1차 40%, 추가 60%."""
     seed, rk, lev, seed_krw = settings()
@@ -180,29 +191,40 @@ def why_lines(ind, k, d):
 
 
 def order_summary(e, d, risk, atr):
-    """메시지 맨 아래: 순서대로 할 일 (진입 → 추가 → 30% 익절 → 나머지) + 손절."""
+    """메시지 맨 아래: 비트겟 주문 화면에 넣을 값 (진입 → 추가 → 30% 익절 → 나머지) + 손절."""
     p = plan(e, risk)
     seed, stop, add = p["seed"], e - d * risk, e + d * risk
     go = "오르면" if d == 1 else "내려가면"
     back = "내려가면" if d == 1 else "오르면"
     side = "롱" if d == 1 else "숏"
+    button = "초록색 「롱/매수」" if d == 1 else "빨간색 「숏/매도」"
+    q1, q2 = btc_qty(p["first"], e), btc_qty(p["add"], add)
     loss1, loss2 = pnl(e, add, d, risk, stop, False), pnl(e, add, d, risk, e, True)
     lines = [
-        f"━━ 이렇게 하세요 (시드 {usd(seed)} = {p['seed_krw']:,.0f}원) ━━",
-        f"1️⃣ 지금 {fmt(e)}에 {side}({'오를 쪽' if d == 1 else '내릴 쪽'}에 거는 것) 진입 · {p['use_lev']:g}배(넣은 돈의 몇 배로 거래) · {usd(p['m1'])} (시드의 {p['m1'] / seed * 100:.1f}%)",
-        f"2️⃣ {fmt(add)}까지 {go} (돈 버는 중) · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
-        f"    → 손절을 {fmt(e)}(처음 진입가)로 {'올리기' if d == 1 else '내리기'}",
-        f"3️⃣ RSI(오르내림 힘을 0~100으로 나타낸 점수)가 {'70 위' if d == 1 else '30 밑'}으로 마감하면 · 들고 있는 것의 30% 팔아서 수익 챙기기",
-        "    (가격이 아니라 RSI로 정해져서 2️⃣보다 먼저 올 수도 있어요. 오면 알림이 가요)",
-        "4️⃣ 나머지는 손절선이 따라오다 닿으면 끝 (알림이 가요)",
+        f"━━ 비트겟 주문 화면에 이렇게 넣기 (시드 {usd(seed)} = {p['seed_krw']:,.0f}원) ━━",
+        f"1️⃣ 지금 {side}({'오를 쪽' if d == 1 else '내릴 쪽'}에 거는 것) 진입",
+        "   ① 마진 모드: 격리(이 거래에 넣은 돈만 위험)",
+        f"   ② 배율: {p['use_lev']:g}배(넣은 돈의 몇 배로 거래)",
+        "   ③ 주문 종류: 시장가(지금 가격에 바로 체결)",
+        f"   ④ 수량: {q1:.4f} BTC (증거금 약 {usd(p['m1'])} · 시드의 {p['m1'] / seed * 100:.1f}%)",
+        f"   ⑤ TP/SL(익절/손절) 칸을 켜고 손절(SL)에 {fmt(stop)} 입력 ← 꼭 같이 걸기",
+        f"   ⑥ {button} 버튼 누르기",
+        f"2️⃣ {fmt(add)}까지 {go} (돈 버는 중 · 알림이 가요)",
+        f"   같은 방법으로 시장가 {side} {q2:.4f} BTC 추가 (증거금 약 {usd(p['m2'])})",
+        f"   → 포지션 손절(SL)을 {fmt(e)}(처음 진입가)로 수정",
+        f"3️⃣ RSI(오르내림 힘을 0~100으로 나타낸 점수)가 {'70 위' if d == 1 else '30 밑'}으로 마감하면 (알림이 가요)",
+        "   들고 있는 수량의 30%를 시장가로 정리해서 수익 챙기기",
+        "   (가격이 아니라 RSI로 정해져서 2️⃣보다 먼저 올 수도 있어요)",
+        "4️⃣ 나머지는 '손절 옮기기' 알림이 올 때마다 포지션 손절(SL) 가격만 수정 → 닿으면 자동으로 끝",
         "",
-        f"❌ 반대로 {fmt(stop)}까지 {back} 손절 → {usd(loss1)} ({pct_of(loss1, seed)})",
+        f"❌ 반대로 {fmt(stop)}까지 {back} 자동 손절 → {usd(loss1)} ({pct_of(loss1, seed)})",
         f"    2️⃣까지 한 뒤라면 {fmt(e)}에서 손절 → {usd(loss2)} ({pct_of(loss2, seed)})",
         "",
         f"💰 참고 (목표가 아님): 2️⃣까지 하고 가격이 여기까지 {go}",
     ]
     lines.append("    " + " · ".join(f"{fmt(e + d * k * risk)} → {usd(pnl(e, add, d, risk, e + d * k * risk, True), True)}" for k in (2, 3, 5)))
-    lines.append(f"(손절폭 = ATR×2 = 최근 4시간 평균 움직임 {fmt(atr)}달러의 2배 · RSI = 0~100 점수, {'70 넘으면 과열' if d == 1 else '30 밑이면 너무 빠짐'})")
+    lines.append(f"(손절폭 = ATR(최근 4시간 평균 움직임 폭) {fmt(atr)}달러의 2배)")
+    lines.append(SL_HOW)
     if p["use_lev"] < p["lev"]:
         lines.append(f"⚠ 이번엔 {p['lev']:g}배면 손절 전에 강제 청산(넣은 돈이 바닥나 거래소가 강제로 정리)될 수 있어서 {p['use_lev']:g}배로 계산했어요")
     return lines
@@ -248,33 +270,38 @@ def signal_message(ind, t):
 def event_message(ind, t, kind, m, px):
     d, e, risk = t["d"], t["entry"], t["risk"]
     side = "롱" if d == 1 else "숏"
-    seed = plan(e, risk)["seed"]
+    p = plan(e, risk)
+    seed = p["seed"]
     if kind == "add":
-        p = plan(e, risk)
         return "\n".join([
             f"📈 {side} 2️⃣ 추가 진입 · {fmt(px)} 도달 (돈 버는 중)",
-            f"② {p['use_lev']:g}배 · {usd(p['m2'])} 더 넣기 (시드의 {p['m2'] / seed * 100:.1f}%)",
-            f"✋ 손절을 {fmt(e)}(처음 진입가)로 옮기세요 → 그 뒤 손절되면 {usd(pnl(e, t['add_px'], d, risk, e, True))} (추가분만 손해)",
+            f"① 시장가 {side} {btc_qty(p['add'], t['add_px']):.4f} BTC 추가 ({p['use_lev']:g}배 · 격리 · 증거금 약 {usd(p['m2'])})",
+            f"② 포지션 손절(SL)을 {fmt(e)}(처음 진입가)로 수정 → 그 뒤 손절되면 {usd(pnl(e, t['add_px'], d, risk, e, True))} (추가분만 손해)",
+            SL_HOW,
         ])
     if kind == "tp":
         rsi = ind["rsi"][m]
         got = t["realized"] * settings()[0] * settings()[1]
+        held = btc_qty(p["first"], e) + (btc_qty(p["add"], t["add_px"]) if t.get("added") else 0)
         return "\n".join([
             f"💵 {side} 3️⃣ 30% 익절 · {fmt(px)}",
-            f"RSI(오르내림 힘 점수 0~100) {rsi:.0f} ({'과열' if d == 1 else '너무 빠짐'}) → 들고 있는 물량의 30% 팔기 · {usd(got, True)} 확정",
-            f"손절은 {fmt(e)}(처음 진입가) 이상으로 · 나머지 70%는 손절선이 따라가요",
+            f"RSI(오르내림 힘 점수 0~100) {rsi:.0f} ({'과열' if d == 1 else '너무 빠짐'})",
+            f"① 포지션에서 {btc_qty(held * 0.3 * px, px):.4f} BTC(들고 있는 것의 30%)만 시장가로 정리 → 약 {usd(got, True)} 확정",
+            f"② 손절(SL)은 {fmt(e)}(처음 진입가)보다 {'아래로' if d == 1 else '위로'} 두지 않기 · 나머지 70%는 손절선이 따라가요",
         ])
     if kind == "trail":
         money = money_at(t, px)
         return "\n".join([
-            f"🔒 {side} 손절 옮기기 → {fmt(px)} (손절 주문 가격을 바꿔 주세요)",
+            f"🔒 {side} 손절 옮기기 → 포지션 손절(SL)을 {fmt(px)}로 수정",
             f"여기서 끝나도 {usd(money, True)} ({pct_of(money, seed)})",
+            SL_HOW,
         ])
     if kind == "exit":
         money = money_at(t, px)
         return "\n".join([
             f"{'✅' if money > 0 else '❌'} 4️⃣ {side} 끝 · {fmt(px)}에서 손절선에 닿아 정리",
             f"결과 {usd(money, True)} ({pct_of(money, seed)}) · {'추가 진입 포함' if t.get('added') else '①만 진입'}{' · 30% 익절 포함' if t.get('tp') else ''} · 4시간봉 {m - t['entry_k'] + 1}개 동안",
+            "포지션 목록에서 다 정리됐는지 확인 · 남아 있으면 시장가로 전부 정리",
         ])
     return ""
 

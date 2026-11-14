@@ -34,6 +34,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DASHBOARD_URL: https://btc7777-2307.github.io/btc-alert/
           SEED_KRW: ${{ vars.SEED_KRW }}
+          SEED_USD: ${{ vars.SEED_USD }}
           RISK_PCT: ${{ vars.RISK_PCT }}
           LEVERAGE: ${{ vars.LEVERAGE }}
         run: |
@@ -64,5 +65,6 @@ jobs:
           TEST_MESSAGE: "true"
           DASHBOARD_URL: https://btc7777-2307.github.io/btc-alert/
           SEED_KRW: ${{ vars.SEED_KRW }}
+          SEED_USD: ${{ vars.SEED_USD }}
           RISK_PCT: ${{ vars.RISK_PCT }}
           LEVERAGE: ${{ vars.LEVERAGE }}

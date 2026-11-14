@@ -131,9 +131,15 @@ def usdt_krw():
 
 
 def settings():
-    """매번 진입할 때 쓰는 시드(원 → 달러)·기준 위험(%)·배율. GitHub 저장소 변수에서 읽음."""
-    seed_krw = float(os.environ.get("SEED_KRW") or 200000)
-    return (seed_krw / usdt_krw(), float(os.environ.get("RISK_PCT") or 5) / 100,
+    """매번 진입할 때 쓰는 시드(달러)·기준 위험(%)·배율. GitHub 저장소 변수에서 읽음.
+    SEED_USD가 있으면 달러 그대로, 없으면 SEED_KRW(원)를 업비트 USDT 시세로 바꿔 쓴다."""
+    if os.environ.get("SEED_USD"):
+        seed = float(os.environ["SEED_USD"])
+        seed_krw = seed * usdt_krw()
+    else:
+        seed_krw = float(os.environ.get("SEED_KRW") or 200000)
+        seed = seed_krw / usdt_krw()
+    return (seed, float(os.environ.get("RISK_PCT") or 5) / 100,
             float(os.environ.get("LEVERAGE") or 30), seed_krw)
 
 
@@ -194,7 +200,7 @@ def order_summary(e, d, risk, atr):
     button = "초록색 「롱/매수」" if d == 1 else "빨간색 「숏/매도」"
     loss1, loss2 = pnl(e, add, d, risk, stop, False), pnl(e, add, d, risk, e, True)
     lines = [
-        f"━━ 비트겟 주문 화면에 이렇게 넣기 (시드 {usd(seed)} = {p['seed_krw']:,.0f}원) ━━",
+        f"━━ 비트겟 주문 화면에 이렇게 넣기 (시드 {usd(seed)} ≈ {p['seed_krw']:,.0f}원) ━━",
         f"1️⃣ 지금 {side}({'오를 쪽' if d == 1 else '내릴 쪽'}에 거는 것) 진입",
         "   ① 마진 모드: 격리(이 거래에 넣은 돈만 위험)",
         f"   ② 배율: {p['use_lev']:g}배(넣은 돈의 몇 배로 거래)",

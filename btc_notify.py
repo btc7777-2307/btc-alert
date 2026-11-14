@@ -155,21 +155,22 @@ SL_HOW = "(손절 바꾸는 곳: 포지션 목록의 TP/SL(익절/손절) 버튼
 
 
 def plan(entry, risk):
-    """시드(이 거래에 쓸 돈)를 격리 증거금으로 다 쓴다고 보고 배율을 정한다.
-    계획 물량 = 손절폭(risk)만큼 움직이면 시드의 RISK_PCT%를 잃는 크기. 1차 40%, 추가 60%.
-    배율 = 계획 물량 ÷ 시드 (올림) → 1차+추가 증거금 합이 시드를 넘지 않는다.
-    그 배율이 손절 전에 강제 청산될 만큼 높으면 안전한 배율로 낮추고 물량을 줄인다(scaled)."""
-    seed, rk, lev_cap, seed_krw = settings()
+    """계획 물량 = 손절폭(risk)만큼 움직이면 시드의 RISK_PCT%를 잃는 크기. 1차 40%, 추가 60%.
+    배율은 LEVERAGE(기본 10배). 손절 전에 강제 청산될 만큼 높으면 낮추고,
+    넣을 돈(증거금) 합계가 시드를 넘으면 안전한 범위 안에서 배율을 올린다. 그래도 넘으면 물량을 줄인다(scaled)."""
+    seed, rk, lev, seed_krw = settings()
     stop_pct = risk / entry
     notional = seed * rk / stop_pct
-    safe = min(lev_cap, max_safe_leverage(stop_pct))
-    use_lev = max(1, math.ceil(notional / seed - 1e-9))
-    scaled = use_lev > safe
+    safe = max_safe_leverage(stop_pct)
+    use_lev = min(lev, safe)
+    if notional / use_lev > seed:
+        use_lev = min(safe, math.ceil(notional / seed - 1e-9))
+    scaled = notional / use_lev > seed
     if scaled:
-        use_lev, notional = safe, seed * safe
+        notional = seed * use_lev
     first, add = notional * stg.FIRST, notional * (1 - stg.FIRST)
-    return dict(seed=seed, seed_krw=seed_krw, use_lev=use_lev, scaled=scaled, first=first, add=add,
-                m1=first / use_lev, m2=add / use_lev)
+    return dict(seed=seed, seed_krw=seed_krw, lev=lev, use_lev=use_lev, scaled=scaled, first=first, add=add,
+                m1=first / use_lev, m2=add / use_lev, max_loss=seed * rk)
 
 
 def pnl(entry, add_px, d, risk, px, added):
@@ -208,7 +209,7 @@ def order_summary(e, d, risk, atr):
     button = "초록색 「롱/매수」" if d == 1 else "빨간색 「숏/매도」"
     loss1, loss2 = pnl(e, add, d, risk, stop, False), pnl(e, add, d, risk, e, True)
     lines = [
-        f"━━ 비트겟 주문 화면에 이렇게 넣기 (이 거래에 쓸 돈 {usd(seed)} ≈ {p['seed_krw']:,.0f}원 · 격리) ━━",
+        f"━━ 비트겟 주문 화면에 이렇게 넣기 (시드 {usd(seed)} ≈ {p['seed_krw']:,.0f}원 · 손절 1번 최대 {usd(p['max_loss'])}) ━━",
         f"1️⃣ 지금 {side}({'오를 쪽' if d == 1 else '내릴 쪽'}에 거는 것) 진입",
         "   ① 마진 모드: 격리(이 거래에 넣은 돈만 위험)",
         f"   ② 배율: {p['use_lev']:g}배(넣은 돈의 몇 배로 거래)",
@@ -234,6 +235,10 @@ def order_summary(e, d, risk, atr):
     lines.append(f"(손절폭 = ATR(최근 4시간 평균 움직임 폭) {fmt(atr)}달러의 2배)")
     lines.append(QTY_HOW)
     lines.append(SL_HOW)
+    if p["use_lev"] < p["lev"]:
+        lines.append(f"⚠ 이번엔 손절폭이 넓어서 {p['lev']:g}배면 손절 전에 강제 청산(넣은 돈이 바닥나 거래소가 강제로 정리)될 수 있어 {p['use_lev']:g}배로 계산했어요")
+    elif p["use_lev"] > p["lev"]:
+        lines.append(f"⚠ 이번엔 손절폭이 좁아서, 넣을 돈이 시드를 넘지 않게 {p['use_lev']:g}배로 계산했어요")
     if p["scaled"]:
         lines.append(f"⚠ 이번엔 손절폭이 아주 좁아서, 더 높은 배율이면 손절 전에 강제 청산(넣은 돈이 바닥나 거래소가 강제로 정리)될 수 있어요. "
                      f"{p['use_lev']:g}배로 낮추고 물량을 줄였어요 (손절 시 손해도 그만큼 작아요)")

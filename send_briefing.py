@@ -6,11 +6,13 @@ GitHub 알림 실행(5분마다)에서 btc_notify.py 앞에 실행된다.
 """
 import json
 import os
+import re
 import time
 import urllib.parse
 
 import btc_signals as bs
 import btc_notify as bn
+import rule_status
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LATEST = os.path.join(HERE, "briefings", "latest.json")
@@ -64,6 +66,18 @@ def split(text, n=3900):
     return parts
 
 
+def put_rule_status(text, line):
+    """본문의 신호판 규칙 줄을 빼고, 보내는 지금 상태(line)를 '단기 견해' 바로 다음 줄에 넣는다.
+    브리핑을 쓰는 클라우드에서는 비트겟 접속이 막혀 '확인 불가'로 적히기 때문에 여기서 채운다."""
+    text = re.sub(r"[ \t]*\([^()\n]*신호판 규칙 상태[^()\n]*\)", "", text)
+    rows = [r for r in text.split("\n") if not re.match(r"[\s(•·]*(참고\)?\s*·?\s*)?신호판( 규칙)?( 상태| 참고)?\s*(:|는)", r)]
+    at = next((i + 1 for i in range(len(rows) - 1, -1, -1) if rows[i].startswith("단기 견해")), None)
+    if at is None:
+        at = next((i for i, r in enumerate(rows) if r.startswith("💱")), len(rows))
+    rows.insert(at, line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(rows))
+
+
 def main():
     try:
         b = json.load(open(LATEST))
@@ -75,6 +89,10 @@ def main():
     if b.get("date") != today or st.get("briefing_sent") == today:
         print("보낼 브리핑 없음")
         return
+    try:
+        b["text"] = put_rule_status(b["text"], rule_status.status())
+    except Exception as e:  # 시세를 못 받으면 브리핑은 그대로 보낸다
+        print("신호판 규칙 상태 확인 실패:", e)
     photos = [u for u in (indices_chart(b), btc_chart()) if u]
     if not os.environ.get("TELEGRAM_TOKEN"):
         print("[미리보기] 그림:", *photos, sep="\n")

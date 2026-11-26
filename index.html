@@ -611,7 +611,7 @@ function cardSkeleton(s) {
     </div>
     <div class="chart-legend num" data-legend><span class="lg-e200">EMA200</span><span class="lg-dc">돈치안 20</span><span class="good">▲ 롱</span><span class="bad">▼ 숏</span><span class="muted ohlc" data-ohlc>두 손가락으로 확대·축소, 좌우로 끌어 이동</span></div>
     <div class="chart-wrap"><div class="chart" data-chart></div><button type="button" class="chart-reset" data-reset>차트 초기화</button><div class="tool-hint" data-hint></div>
-      <div class="draw-bar" data-drawbar hidden><span data-drawname></span><button type="button" data-act="lock">잠금</button><button type="button" data-act="del">삭제</button><button type="button" data-act="close" aria-label="선택 해제">닫기</button></div></div>
+      <div class="draw-bar" data-drawbar hidden><span data-drawname></span><button type="button" data-act="home" hidden>처음 위치로</button><button type="button" data-act="lock">잠금</button><button type="button" data-act="del">삭제</button><button type="button" data-act="close" aria-label="선택 해제">닫기</button></div></div>
     <div class="chart-legend num sub"><span>아래 창: RSI(14) · MACD(12,26,9)</span></div>
     <div class="sec" data-bt><span class="label">백테스트</span><span class="note">과거 데이터를 불러오는 중…</span></div>`;
   return el;
@@ -766,6 +766,20 @@ if (Object.keys(drawings).some(k => k !== ALL)) {
 const saveLocal = () => {
   try { localStorage.setItem("btc-dash-drawings", JSON.stringify(drawings)); localStorage.setItem("btc-dash-drawmeta", JSON.stringify(drawMeta)); } catch (e) {}
 };
+// 미리 그린 채널을 처음 자리로 되돌림 (자리·단계·색만, 아이디는 그대로). 되돌린 뒤에는 잠가서 실수로 안 끌리게
+function resetPreset(list) {
+  const fresh = { ...JSON.parse(JSON.stringify(SAFARI_FIB)), locked: true };
+  const i = list.findIndex(d => d.preset === SAFARI_FIB.preset);
+  if (i >= 0) { if (list[i].id) fresh.id = list[i].id; list[i] = fresh; } else list.unshift(fresh);
+}
+// 2026-11-26: 실수로 끌어 옮겨진 채널을 기기마다 한 번 되돌림 (더 최근 시각이라 텔레그램 동기화에도 이 자리가 올라감)
+let presetReset = false;
+try { presetReset = localStorage.getItem("btc-dash-preset-reset") === "2026-11-26"; } catch (e) {}
+if (!presetReset) {
+  resetPreset(drawings[ALL] = drawings[ALL] || []);
+  drawMeta[ALL] = Date.now(); saveLocal();
+  try { localStorage.setItem("btc-dash-preset-reset", "2026-11-26"); } catch (e) {}
+}
 function saveDrawings(key) {
   if (key) { drawMeta[key] = Date.now(); cloudPush(key); }
   saveLocal();
@@ -1246,6 +1260,7 @@ function select(s, id) {
     bar.querySelector('[data-act="lock"]').textContent = d.locked ? "잠금 해제" : "잠금";
     bar.querySelector('[data-act="del"]').disabled = !!d.locked;
   }
+  bar.querySelector('[data-act="home"]').hidden = !(d && d.preset === SAFARI_FIB.preset);
   // 선을 고른 동안은 손가락으로 끌어도 페이지가 스크롤되지 않게
   card.querySelector("[data-chart]").style.touchAction = d && !d.locked ? "none" : "";
   renderDrawings(s);
@@ -1300,6 +1315,11 @@ function bindDrawing(s, c, box) {
     const d = (drawings[dkey(s)] || []).find(x => x.id === c.selected);
     if (!d) return;
     d.locked = !d.locked; saveDrawings(dkey(s)); select(s, d.id);
+  });
+  bar.querySelector('[data-act="home"]').addEventListener("click", () => {
+    const list = drawings[dkey(s)] || [], d = list.find(x => x.id === c.selected);
+    if (!d || d.preset !== SAFARI_FIB.preset) return;
+    resetPreset(list); saveDrawings(dkey(s)); select(s, d.id);
   });
   bar.querySelector('[data-act="del"]').addEventListener("click", () => deleteSelected(s));
   bar.querySelector('[data-act="close"]').addEventListener("click", () => select(s, null));
